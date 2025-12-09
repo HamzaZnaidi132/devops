@@ -1,0 +1,352 @@
+{
+  "version": "1.0",
+  "records": [
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/entities/TypeChambre.java",
+      "timestamp": 1763661572223,
+      "startOffset": 0,
+      "endOffset": 65,
+      "codeContent": "package tn.esprit.tpfoyer.entities;\n\npublic enum TypeChambre {\n}\n",
+      "aiProbability": 90,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 5
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/entities/Foyer.java",
+      "timestamp": 1763661649366,
+      "startOffset": 0,
+      "endOffset": 60,
+      "codeContent": "package tn.esprit.tpfoyer.entities;\n\npublic class Foyer {\n}\n",
+      "aiProbability": 90,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 5
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/entities/Bloc.java",
+      "timestamp": 1763661660905,
+      "startOffset": 0,
+      "endOffset": 59,
+      "codeContent": "package tn.esprit.tpfoyer.entities;\n\npublic class Bloc {\n}\n",
+      "aiProbability": 90,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 5
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/entities/Universite.java",
+      "timestamp": 1763661676547,
+      "startOffset": 0,
+      "endOffset": 65,
+      "codeContent": "package tn.esprit.tpfoyer.entities;\n\npublic class Universite {\n}\n",
+      "aiProbability": 90,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 5
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/entities/Chambre.java",
+      "timestamp": 1763661690275,
+      "startOffset": 0,
+      "endOffset": 62,
+      "codeContent": "package tn.esprit.tpfoyer.entities;\n\npublic class Chambre {\n}\n",
+      "aiProbability": 90,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 5
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/entities/Reservation.java",
+      "timestamp": 1763661702936,
+      "startOffset": 0,
+      "endOffset": 66,
+      "codeContent": "package tn.esprit.tpfoyer.entities;\n\npublic class Reservation {\n}\n",
+      "aiProbability": 90,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 5
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/entities/Etudiant.java",
+      "timestamp": 1763661722774,
+      "startOffset": 0,
+      "endOffset": 63,
+      "codeContent": "package tn.esprit.tpfoyer.entities;\n\npublic class Etudiant {\n}\n",
+      "aiProbability": 90,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 5
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/entities/Chambre.java",
+      "timestamp": 1763662206466,
+      "startOffset": 38,
+      "endOffset": 534,
+      "codeContent": "ackage com.example.gestionfoyer.entities;\n\nimport jakarta.persistence.*;\nimport lombok.*;\n\nimport java.io.Serializable;\n\n@Entity\n@Getter\n@Setter\n@NoArgsConstructor\n@AllArgsConstructor\n@Builder\npublic class Chambre implements Serializable {\n    @Id\n    @GeneratedValue(strategy \u003d GenerationType.IDENTITY)\n    private Long idChambre;\n    \n    private Long numeroChambre;\n    \n    @Enumerated(EnumType.STRING)\n    private TypeChambre typeC;\n    \n    // Pas d\u0027associations pour le moment (Partie 1)\n}",
+      "aiProbability": 95,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 25
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/entities/Reservation.java",
+      "timestamp": 1763662235075,
+      "startOffset": 38,
+      "endOffset": 478,
+      "codeContent": "ackage com.example.gestionfoyer.entities;\n\nimport jakarta.persistence.*;\nimport lombok.*;\n\nimport java.io.Serializable;\nimport java.util.Date;\n\n@Entity\n@Getter\n@Setter\n@NoArgsConstructor\n@AllArgsConstructor\n@Builder\npublic class Reservation implements Serializable {\n    @Id\n    private String idReservation;\n    \n    private Date anneeUniversitaire;\n    private Boolean estValide;\n    \n    // Pas d\u0027associations pour le moment (Partie 1)\n}",
+      "aiProbability": 95,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 23
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/entities/Etudiant.java",
+      "timestamp": 1763662270671,
+      "startOffset": 38,
+      "endOffset": 593,
+      "codeContent": "ackage com.example.gestionfoyer.entities;\n\nimport jakarta.persistence.*;\nimport lombok.*;\n\nimport java.io.Serializable;\nimport java.util.Date;\n\n@Entity\n@Getter\n@Setter\n@NoArgsConstructor\n@AllArgsConstructor\n@Builder\npublic class Etudiant implements Serializable {\n    @Id\n    @GeneratedValue(strategy \u003d GenerationType.IDENTITY)\n    private Long idEtudiant;\n    \n    private String nomEt;\n    private String prenomEt;\n    private Long cin;\n    private String ecole;\n    private Date dateNaissance;\n    \n    // Pas d\u0027associations pour le moment (Partie 1)\n}",
+      "aiProbability": 95,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 27
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/entities/Foyer.java",
+      "timestamp": 1763663540030,
+      "startOffset": 37,
+      "endOffset": 677,
+      "codeContent": "import jakarta.persistence.*;\nimport lombok.*;\n\nimport java.io.Serializable;\nimport java.util.Set;\n\n@Entity\n@Getter\n@Setter\n@NoArgsConstructor\n@AllArgsConstructor\n@Builder\npublic class Foyer implements Serializable {\n    @Id\n    @GeneratedValue(strategy \u003d GenerationType.IDENTITY)\n    private Long idFoyer;\n    \n    private String nomFoyer;\n    private Long capaciteFoyer;\n    \n    // Relation OneToOne avec Universite (Foyer est le child)\n    @OneToOne(mappedBy \u003d \"foyer\")\n    private Universite universite;\n    \n    // Relation OneToMany avec Bloc\n    @OneToMany(mappedBy \u003d \"foyer\", cascade \u003d CascadeType.ALL)\n    private Set\u003cBloc\u003e blocs;",
+      "aiProbability": 95,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 27
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/entities/Bloc.java",
+      "timestamp": 1763663594182,
+      "startOffset": 37,
+      "endOffset": 662,
+      "codeContent": "import jakarta.persistence.*;\nimport lombok.*;\n\nimport java.io.Serializable;\nimport java.util.Set;\n\n@Entity\n@Getter\n@Setter\n@NoArgsConstructor\n@AllArgsConstructor\n@Builder\npublic class Bloc implements Serializable {\n    @Id\n    @GeneratedValue(strategy \u003d GenerationType.IDENTITY)\n    private Long idBloc;\n    \n    private String nomBloc;\n    private Long capaciteBloc;\n    \n    // Relation ManyToOne avec Foyer\n    @ManyToOne\n    @JoinColumn(name \u003d \"foyer_id\")\n    private Foyer foyer;\n    \n    // Relation OneToMany avec Chambre\n    @OneToMany(mappedBy \u003d \"bloc\", cascade \u003d CascadeType.ALL)\n    private Set\u003cChambre\u003e chambres;",
+      "aiProbability": 95,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 28
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/entities/Universite.java",
+      "timestamp": 1763663625988,
+      "startOffset": 37,
+      "endOffset": 567,
+      "codeContent": "import jakarta.persistence.*;\nimport lombok.*;\n\nimport java.io.Serializable;\n\n@Entity\n@Getter\n@Setter\n@NoArgsConstructor\n@AllArgsConstructor\n@Builder\npublic class Universite implements Serializable {\n    @Id\n    @GeneratedValue(strategy \u003d GenerationType.IDENTITY)\n    private Long idUniversite;\n    \n    private String nomUniversite;\n    private String adresse;\n    \n    // Relation OneToOne avec Foyer (Universite est le parent)\n    @OneToOne(cascade \u003d CascadeType.ALL)\n    @JoinColumn(name \u003d \"foyer_id\")\n    private Foyer foyer;",
+      "aiProbability": 95,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 23
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/entities/Chambre.java",
+      "timestamp": 1763663729198,
+      "startOffset": 37,
+      "endOffset": 721,
+      "codeContent": "import jakarta.persistence.*;\nimport lombok.*;\n\nimport java.io.Serializable;\nimport java.util.Set;\n\n@Entity\n@Getter\n@Setter\n@NoArgsConstructor\n@AllArgsConstructor\n@Builder\npublic class Chambre implements Serializable {\n    @Id\n    @GeneratedValue(strategy \u003d GenerationType.IDENTITY)\n    private Long idChambre;\n    \n    private Long numeroChambre;\n    \n    @Enumerated(EnumType.STRING)\n    private TypeChambre typeC;\n    \n    // Relation ManyToOne avec Bloc\n    @ManyToOne\n    @JoinColumn(name \u003d \"bloc_id\")\n    private Bloc bloc;\n    \n    // Relation OneToMany avec Reservation\n    @OneToMany(mappedBy \u003d \"chambre\", cascade \u003d CascadeType.ALL)\n    private Set\u003cReservation\u003e reservations;",
+      "aiProbability": 95,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 30
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/entities/Reservation.java",
+      "timestamp": 1763663767069,
+      "startOffset": 37,
+      "endOffset": 860,
+      "codeContent": "import jakarta.persistence.*;\nimport lombok.*;\n\nimport java.io.Serializable;\nimport java.util.Date;\nimport java.util.Set;\n\n@Entity\n@Getter\n@Setter\n@NoArgsConstructor\n@AllArgsConstructor\n@Builder\npublic class Reservation implements Serializable {\n    @Id\n    private String idReservation;\n    \n    private Date anneeUniversitaire;\n    private Boolean estValide;\n    \n    // Relation ManyToOne avec Chambre\n    @ManyToOne\n    @JoinColumn(name \u003d \"chambre_id\")\n    private Chambre chambre;\n    \n    // Relation ManyToMany avec Etudiant (Reservation est le parent)\n    @ManyToMany(cascade \u003d CascadeType.ALL)\n    @JoinTable(\n        name \u003d \"reservation_etudiant\",\n        joinColumns \u003d @JoinColumn(name \u003d \"reservation_id\"),\n        inverseJoinColumns \u003d @JoinColumn(name \u003d \"etudiant_id\")\n    )\n    private Set\u003cEtudiant\u003e etudiants;",
+      "aiProbability": 95,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 33
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/entities/Etudiant.java",
+      "timestamp": 1763663827155,
+      "startOffset": 37,
+      "endOffset": 668,
+      "codeContent": "import jakarta.persistence.*;\nimport lombok.*;\n\nimport java.io.Serializable;\nimport java.util.Date;\nimport java.util.Set;\n\n@Entity\n@Getter\n@Setter\n@NoArgsConstructor\n@AllArgsConstructor\n@Builder\npublic class Etudiant implements Serializable {\n    @Id\n    @GeneratedValue(strategy \u003d GenerationType.IDENTITY)\n    private Long idEtudiant;\n    \n    private String nomEt;\n    private String prenomEt;\n    private Long cin;\n    private String ecole;\n    private Date dateNaissance;\n    \n    // Relation ManyToMany avec Reservation (Etudiant est le child)\n    @ManyToMany(mappedBy \u003d \"etudiants\")\n    private Set\u003cReservation\u003e reservations;",
+      "aiProbability": 95,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 27
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/entities/Reservation.java",
+      "timestamp": 1763670215658,
+      "startOffset": 383,
+      "endOffset": 423,
+      "codeContent": " @ManyToOne\n    private Chambre chambre;",
+      "aiProbability": 90,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 2
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/entities/Chambre.java",
+      "timestamp": 1763670239889,
+      "startOffset": 443,
+      "endOffset": 477,
+      "codeContent": "    @JoinColumn(name \u003d \"bloc_id\")\n",
+      "aiProbability": 90,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 2
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/tp-foyer/src/main/java/tn/esprit/tpfoyer/Controllers/UserController.java",
+      "timestamp": 1763670452466,
+      "startOffset": 79,
+      "endOffset": 126,
+      "codeContent": "import org.springframework.http.ResponseEntity;",
+      "aiProbability": 90,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 1
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/tp-foyer/src/main/java/tn/esprit/tpfoyer/Controllers/UserController.java",
+      "timestamp": 1763670452469,
+      "startOffset": 79,
+      "endOffset": 122,
+      "codeContent": "import org.springframework.http.HttpStatus;",
+      "aiProbability": 90,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 1
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/tp-foyer/src/main/java/tn/esprit/tpfoyer/Controllers/UserController.java",
+      "timestamp": 1763670452476,
+      "startOffset": 79,
+      "endOffset": 141,
+      "codeContent": "import org.springframework.beans.factory.annotation.Autowired;",
+      "aiProbability": 90,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 1
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/tp-foyer/src/main/java/tn/esprit/tpfoyer/Controllers/UserController.java",
+      "timestamp": 1763670452516,
+      "startOffset": 322,
+      "endOffset": 368,
+      "codeContent": "import tn.esprit.tpfoyer.Services.UserService;",
+      "aiProbability": 90,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 1
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/tp-foyer/src/main/java/tn/esprit/tpfoyer/Services/UserService.java",
+      "timestamp": 1763670456083,
+      "startOffset": 76,
+      "endOffset": 119,
+      "codeContent": "import tn.esprit.tpfoyer.mapper.UserMapper;",
+      "aiProbability": 90,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 1
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/tp-foyer/src/main/java/tn/esprit/tpfoyer/Services/UserService.java",
+      "timestamp": 1763670456087,
+      "startOffset": 245,
+      "endOffset": 288,
+      "codeContent": "import tn.esprit.tpfoyer.mapper.UserMapper;",
+      "aiProbability": 90,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 1
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/repositories/FoyerRepository.java",
+      "timestamp": 1763841186196,
+      "startOffset": 0,
+      "endOffset": 78,
+      "codeContent": "package tn.esprit.tpfoyer.repositories;\n\npublic interface FoyerRepository {\n}\n",
+      "aiProbability": 90,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 5
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/repositories/FoyerRepository.java",
+      "timestamp": 1763841888495,
+      "startOffset": 41,
+      "endOffset": 382,
+      "codeContent": "import tn.esprit.tpfoyer.entities.Foyer;\nimport org.springframework.data.jpa.repository.JpaRepository;\nimport org.springframework.stereotype.Repository;\n\n@Repository\npublic interface FoyerRepository extends JpaRepository\u003cFoyer, Long\u003e {\n    // Méthodes de base fournies par JpaRepository :\n    // findAll(), findById(), save(), deleteById()\n}",
+      "aiProbability": 95,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 9
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/repositories/BlocRepository.java",
+      "timestamp": 1763842380220,
+      "startOffset": 0,
+      "endOffset": 77,
+      "codeContent": "package tn.esprit.tpfoyer.repositories;\n\npublic interface BlocRepository {\n}\n",
+      "aiProbability": 90,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 5
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/repositories/UniversiteRepository.java",
+      "timestamp": 1763842394871,
+      "startOffset": 0,
+      "endOffset": 83,
+      "codeContent": "package tn.esprit.tpfoyer.repositories;\n\npublic interface UniversiteRepository {\n}\n",
+      "aiProbability": 90,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 5
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/repositories/ChambreRepository.java",
+      "timestamp": 1763842414212,
+      "startOffset": 0,
+      "endOffset": 80,
+      "codeContent": "package tn.esprit.tpfoyer.repositories;\n\npublic interface ChambreRepository {\n}\n",
+      "aiProbability": 90,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 5
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/repositories/ReservationRepository.java",
+      "timestamp": 1763842431552,
+      "startOffset": 0,
+      "endOffset": 84,
+      "codeContent": "package tn.esprit.tpfoyer.repositories;\n\npublic interface ReservationRepository {\n}\n",
+      "aiProbability": 90,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 5
+    },
+    {
+      "filePath": "C:/Users/saife/Desktop/SpringBoot/tp-foyer/src/main/java/tn/esprit/tpfoyer/repositories/EtudiantRepository.java",
+      "timestamp": 1763842450867,
+      "startOffset": 0,
+      "endOffset": 81,
+      "codeContent": "package tn.esprit.tpfoyer.repositories;\n\npublic interface EtudiantRepository {\n}\n",
+      "aiProbability": 90,
+      "aiTool": "AI Assistant",
+      "detectionMethod": "REALTIME_SPEED_ANALYSIS",
+      "lineCount": 5
+    }
+  ],
+  "toolStats": {
+    "AI Assistant": {
+      "usageCount": 31,
+      "totalLines": 327
+    }
+  }
+}
