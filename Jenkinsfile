@@ -48,7 +48,6 @@ pipeline {
 		}
 	}
 
-	// Ajouter ce stage après "Docker Login & Push"
     stage('Deploy to Kubernetes') {
         steps {
             echo "Déploiement sur Kubernetes..."
@@ -68,6 +67,8 @@ pipeline {
             }
         }
     }
+
+
 
     stage('SonarQube Analysis') {
         steps {
