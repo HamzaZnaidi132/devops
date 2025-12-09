@@ -47,7 +47,6 @@ pipeline {
 			}
 		}
 	}
-
     stage('Deploy to Kubernetes') {
         steps {
             echo "Déploiement sur Kubernetes..."
