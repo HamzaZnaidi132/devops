@@ -47,7 +47,6 @@ pipeline {
 			}
 		}
 
-		// Ajouter ce stage après "Docker Login & Push"
             stage('Deploy to Kubernetes') {
                 steps {
                     echo "Déploiement sur Kubernetes..."
