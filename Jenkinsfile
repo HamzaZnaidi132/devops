@@ -6,9 +6,9 @@ pipeline {
 		IMAGE_TAG  = "latest"
 	}
 
-	//triggers {
-		//pollSCM('* * * * *')  // vérification chaque minute
-	//}
+	triggers {
+        githubPush() // This enables webhook triggers
+	}
 
 	stages {
 
@@ -64,15 +64,6 @@ pipeline {
                             # Redémarrer le deployment pour prendre en compte les changements
                             kubectl rollout restart deployment/spring-app -n devops
                         """
-                    }
-                }
-            }
-
-        stage('SonarQube Analysis') {
-                steps {
-                    echo "Analyse de la qualité du code avec SonarQube..."
-                    withSonarQubeEnv('SonarQube-Server') {
-                        sh 'mvn sonar:sonar -Dsonar.projectKey=tp-foyer'
                     }
                 }
             }
