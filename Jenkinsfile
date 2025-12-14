@@ -3,46 +3,87 @@ pipeline {
 
     environment {
         IMAGE_NAME = "saiffrikhi/foyer_project"
-        IMAGE_TAG  = "latest"
+        IMAGE_TAG  = "${BUILD_ID}"  // Use BUILD_ID instead of "latest"
         K8S_NAMESPACE = "devops"
+        MAVEN_OPTS = "-Xmx1024m -XX:MaxPermSize=256m"
+    }
+
+    tools {
+        maven 'M3'  // Make sure this tool is configured in Jenkins
+        jdk 'jdk17'  // Make sure JDK is configured in Jenkins
     }
 
     triggers {
-        githubPush() // This enables webhook triggers
+        pollSCM('* * * * *')  // Poll SCM instead of githubPush (more reliable)
     }
 
     stages {
         stage('Checkout') {
             steps {
                 echo "Récupération du code depuis GitHub..."
-                git branch: 'main', url: 'https://github.com/saifeddinefrikhi-lab/FoyerProject.git'
+                checkout([$class: 'GitSCM',
+                    branches: [[name: 'main']],
+                    userRemoteConfigs: [[url: 'https://github.com/saifeddinefrikhi-lab/FoyerProject.git']]
+                ])
             }
         }
 
-        stage('Clean & Build') {
+        stage('Clean & Compile') {
             steps {
-                echo "Nettoyage + Build Maven..."
-                sh 'mvn clean install -DskipTests -B'
+                echo "Compilation Maven..."
+                sh 'mvn clean compile -B'
+            }
+        }
+
+        stage('Test') {
+            steps {
+                echo "Exécution des tests..."
+                sh 'mvn test -B'
+            }
+            post {
+                always {
+                    junit 'target/surefire-reports/*.xml'
+                }
+            }
+        }
+
+        stage('Package') {
+            steps {
+                echo "Packaging Maven..."
+                sh 'mvn package -DskipTests -B'
             }
         }
 
         stage('Build Docker Image') {
             steps {
                 echo "Construction de l'image Docker..."
-                sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
+                script {
+                    // Make sure Dockerfile exists
+                    if (fileExists('Dockerfile')) {
+                        sh "docker build --no-cache -t ${IMAGE_NAME}:${IMAGE_TAG} ."
+                        sh "docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:latest"
+                    } else {
+                        error "Dockerfile not found!"
+                    }
+                }
             }
         }
 
         stage('Docker Login & Push') {
             steps {
                 echo "Connexion + push vers DockerHub..."
-                withCredentials([usernamePassword(credentialsId: 'docker-hub',
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PASS')]) {
-                    sh """
-                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                        docker push ${IMAGE_NAME}:${IMAGE_TAG}
-                    """
+                script {
+                    withCredentials([usernamePassword(
+                        credentialsId: 'docker-hub',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )]) {
+                        sh """
+                            echo "${DOCKER_PASS}" | docker login -u "${DOCKER_USER}" --password-stdin
+                            docker push ${IMAGE_NAME}:${IMAGE_TAG}
+                            docker push ${IMAGE_NAME}:latest
+                        """
+                    }
                 }
             }
         }
@@ -50,21 +91,25 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 echo "Déploiement sur Kubernetes..."
+                script {
+                    // Check if kubectl is available
+                    sh 'kubectl version --client'
 
-                // Mettre à jour l'image dans le déploiement
-                sh """
-                    kubectl set image deployment/spring-app \
-                    spring-app=${IMAGE_NAME}:${IMAGE_TAG} \
-                    -n ${K8S_NAMESPACE} \
-                    --record
-                """
+                    // Update deployment
+                    sh """
+                        kubectl set image deployment/spring-app \
+                            spring-app=${IMAGE_NAME}:${IMAGE_TAG} \
+                            -n ${K8S_NAMESPACE} \
+                            --record
+                    """
 
-                // Vérifier le rollout
-                sh """
-                    kubectl rollout status deployment/spring-app \
-                    -n ${K8S_NAMESPACE} \
-                    --timeout=300s
-                """
+                    // Check rollout status
+                    sh """
+                        kubectl rollout status deployment/spring-app \
+                            -n ${K8S_NAMESPACE} \
+                            --timeout=300s
+                    """
+                }
             }
         }
 
@@ -72,10 +117,27 @@ pipeline {
             steps {
                 echo "Exécution des tests d'intégration..."
                 script {
-                    def SPRING_URL = sh(script: 'minikube service spring-service -n devops --url', returnStdout: true).trim()
+                    // Get service URL
+                    sh '''
+                        kubectl get svc spring-service -n devops -o jsonpath="{.status.loadBalancer.ingress[0].ip}"
+                    '''
+
+                    // Wait for service to be ready
+                    sh '''
+                        for i in {1..30}; do
+                            if curl -s -f http://$(minikube ip):$(kubectl get svc spring-service -n devops -o jsonpath="{.spec.ports[0].nodePort}")/actuator/health > /dev/null; then
+                                echo "Service is up!"
+                                break
+                            fi
+                            echo "Waiting for service... ($i/30)"
+                            sleep 10
+                        done
+                    '''
+
+                    // Run integration tests
                     sh """
-                        curl -f ${SPRING_URL}/actuator/health
-                        curl -f ${SPRING_URL}/department/getAllDepartment
+                        curl -f http://\$(minikube ip):\$(kubectl get svc spring-service -n devops -o jsonpath='{.spec.ports[0].nodePort}')/actuator/health
+                        curl -f http://\$(minikube ip):\$(kubectl get svc spring-service -n devops -o jsonpath='{.spec.ports[0].nodePort}')/department/getAllDepartment
                     """
                 }
             }
@@ -85,21 +147,29 @@ pipeline {
     post {
         always {
             echo "Pipeline terminé"
-            // Nettoyage
+            // Cleanup
             sh 'docker system prune -f'
+
+            // Archive artifacts
+            archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
         }
         success {
             echo "Build et déploiement effectués avec succès!"
-            // Notification optionnelle
+            // Optional: Send success notification
         }
         failure {
             echo "Le pipeline a échoué."
-            // Rollback optionnel
-            sh """
-                kubectl rollout undo deployment/spring-app -n ${K8S_NAMESPACE}
-            """
+            script {
+                // Rollback deployment
+                sh """
+                    kubectl rollout undo deployment/spring-app -n ${K8S_NAMESPACE}
+                    echo "Rollback effectué"
+                """
+            }
+        }
+        cleanup {
+            // Clean workspace
+            cleanWs()
         }
     }
-
-
 }
