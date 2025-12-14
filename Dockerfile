@@ -13,16 +13,11 @@ RUN mvn clean package -DskipTests
 FROM eclipse-temurin:17-jre-alpine
 WORKDIR /app
 
-# Créer un utilisateur non-root pour la sécurité
-RUN addgroup -S spring && adduser -S spring -G spring
-USER spring:spring
-
 # Copier le JAR depuis l'étape de build
 COPY --from=build /app/target/*.jar app.jar
 
-# Exposer le port de l'application (ajuste selon ton application)
+# Exposer le port de l'application
 EXPOSE 8080
 
-
 # Commande pour exécuter l'application
-ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar /app/app.jar"]
+ENTRYPOINT ["java", "-jar", "app.jar"]
