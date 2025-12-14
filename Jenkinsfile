@@ -13,8 +13,7 @@ pipeline {
         K8S_NAMESPACE = "devops"
         CONTEXT_PATH = "/tp-foyer"
 
-        // Configuration SonarQube (optionnel)
-        SONAR_HOST = "http://192.168.49.2:32000"
+
     }
 
     options {
