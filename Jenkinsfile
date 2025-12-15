@@ -2,24 +2,10 @@ pipeline {
     agent any
 
     environment {
-        // Docker Hub configuration
-        DOCKERHUB_REGISTRY = 'index.docker.io'
-        DOCKERHUB_NAMESPACE = 'saiffrikhi'  // Your Docker Hub username
-        IMAGE_NAME = "foyer_project"
-        IMAGE_FULL_NAME = "${DOCKERHUB_NAMESPACE}/${IMAGE_NAME}"
-        IMAGE_TAG = "${BUILD_NUMBER}"
-        IMAGE_LATEST = "${DOCKERHUB_NAMESPACE}/${IMAGE_NAME}:latest"
-
-        // Kubernetes configuration
+        IMAGE_NAME = "saiffrikhi/foyer_project"
+        IMAGE_TAG = "latest"
         K8S_NAMESPACE = "devops"
         CONTEXT_PATH = "/tp-foyer"
-
-        // Docker Hub credentials (stored in Jenkins credentials)
-        DOCKERHUB_CREDENTIALS = credentials('docker-hub')
-    }
-
-    triggers {
-        githubPush() // This enables webhook triggers
     }
 
     stages {
@@ -50,87 +36,40 @@ pipeline {
             }
         }
 
-        stage('Login to Docker Hub') {
+        stage('Build Docker Image in Minikube') {
             steps {
-                echo "🔐 Connexion à Docker Hub..."
-                withCredentials([usernamePassword(
-                    credentialsId: 'docker-hub',
-                    usernameVariable: 'DOCKERHUB_USERNAME',
-                    passwordVariable: 'DOCKERHUB_PASSWORD'
-                )]) {
-                    sh """
-                        echo "=== Connexion à Docker Hub ==="
-                        echo "\${DOCKERHUB_PASSWORD}" | docker login ${DOCKERHUB_REGISTRY} -u "\${DOCKERHUB_USERNAME}" --password-stdin
-                        echo "✅ Connecté à Docker Hub en tant que \${DOCKERHUB_USERNAME}"
-                    """
-                }
-            }
-        }
+                echo "🐳 Construction de l'image Docker dans Minikube..."
+                sh """
+                    # Switch to Minikube's Docker daemon
+                    eval \$(minikube docker-env)
 
-        stage('Build Docker Image for Docker Hub') {
-            steps {
-                echo "🐳 Construction de l'image Docker pour Docker Hub..."
-                script {
-                    // Check if Dockerfile exists
-                    def dockerfileExists = fileExists('Dockerfile')
-                    if (!dockerfileExists) {
-                        echo "⚠️ Dockerfile non trouvé, création d'un Dockerfile par défaut..."
-                        sh '''
-                            cat > Dockerfile << \'EOF\'
+                    # Créez un Dockerfile simple
+                    cat > Dockerfile.jenkins << 'EOF'
 FROM eclipse-temurin:17-jre-alpine
 WORKDIR /app
 COPY target/*.jar app.jar
-EXPOSE 8050
+EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]
 EOF
-                        '''
-                    }
-                }
 
-                sh """
-                    echo "=== Construction de l'image avec Dockerfile existant ==="
-                    echo "Image: ${IMAGE_FULL_NAME}:${IMAGE_TAG}"
+                    echo "=== Construction de l'image ==="
+                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -f Dockerfile.jenkins .
 
-                    docker build -t ${IMAGE_FULL_NAME}:${IMAGE_TAG} .
-                    docker tag ${IMAGE_FULL_NAME}:${IMAGE_TAG} ${IMAGE_FULL_NAME}:latest
+                    echo "=== Liste des images dans Minikube ==="
+                    docker images | grep ${IMAGE_NAME} | head -5
 
-                    echo "=== Liste des images construites ==="
-                    docker images | grep ${IMAGE_FULL_NAME}
+                    # Switch back to normal Docker daemon
+                    eval \$(minikube docker-env -u)
                 """
             }
         }
 
-        stage('Push Docker Image to Docker Hub') {
+        stage('Clean Old Resources - No Sudo') {
             steps {
-                echo "🚀 Pushing Docker image to Docker Hub..."
+                echo "🧹 Nettoyage des anciennes ressources (sans sudo)..."
                 sh """
-                    echo "=== Push de l'image versionnée ==="
-                    docker push ${IMAGE_FULL_NAME}:${IMAGE_TAG}
-
-                    echo "=== Push de l'image latest ==="
-                    docker push ${IMAGE_FULL_NAME}:latest
-
-                    echo "✅ Images poussées vers Docker Hub"
-                    echo "Image disponible sur: https://hub.docker.com/r/${DOCKERHUB_NAMESPACE}/${IMAGE_NAME}"
-                """
-            }
-        }
-
-        stage('Logout from Docker Hub') {
-            steps {
-                echo "👋 Déconnexion de Docker Hub..."
-                sh """
-                    docker logout ${DOCKERHUB_REGISTRY}
-                    echo "✅ Déconnecté de Docker Hub"
-                """
-            }
-        }
-
-        stage('Clean Old Kubernetes Resources') {
-            steps {
-                echo "🧹 Nettoyage des anciennes ressources..."
-                sh """
-                    # Supprimez toutes les ressources existantes
+                    # Supprimez toutes les ressources existantes sans utiliser sudo
+                    echo "=== Suppression des déploiements et services ==="
                     kubectl delete deployment spring-app -n ${K8S_NAMESPACE} --ignore-not-found=true
                     kubectl delete service spring-service -n ${K8S_NAMESPACE} --ignore-not-found=true
                     kubectl delete deployment mysql -n ${K8S_NAMESPACE} --ignore-not-found=true
@@ -142,17 +81,18 @@ EOF
 
                     sleep 10
 
+                    # Vérifiez qu'il ne reste plus de pods
                     echo "=== État après nettoyage ==="
                     kubectl get pods -n ${K8S_NAMESPACE} || true
                 """
             }
         }
 
-        stage('Deploy MySQL') {
+        stage('Deploy MySQL - Alternative Storage') {
             steps {
-                echo "🗄️  Déploiement de MySQL..."
+                echo "🗄️  Déploiement de MySQL avec stockage alternatif..."
                 sh """
-                    echo "=== Création du PV et PVC MySQL ==="
+                    echo "=== Création du PV et PVC MySQL (sans hostPath) ==="
                     cat > /tmp/mysql-storage.yaml << 'EOF'
 apiVersion: v1
 kind: PersistentVolume
@@ -184,18 +124,6 @@ EOF
 
                     echo "=== Création du déploiement MySQL ==="
                     cat > /tmp/mysql-deployment.yaml << 'EOF'
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: mysql-config
-  namespace: devops
-data:
-  my.cnf: |
-    [mysqld]
-    bind-address = 0.0.0.0
-    default_authentication_plugin = mysql_native_password
-    skip-name-resolve
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -214,11 +142,6 @@ spec:
       containers:
       - name: mysql
         image: mysql:8.0
-        command:
-          - mysqld
-          - --bind-address=0.0.0.0
-          - --default-authentication-plugin=mysql_native_password
-          - --skip-name-resolve
         env:
         - name: MYSQL_ROOT_PASSWORD
           value: "root123"
@@ -229,9 +152,6 @@ spec:
         volumeMounts:
         - name: mysql-storage
           mountPath: /var/lib/mysql
-        - name: mysql-config
-          mountPath: /etc/mysql/conf.d/my.cnf
-          subPath: my.cnf
         resources:
           requests:
             memory: "256Mi"
@@ -243,9 +163,6 @@ spec:
       - name: mysql-storage
         persistentVolumeClaim:
           claimName: mysql-pvc
-      - name: mysql-config
-        configMap:
-          name: mysql-config
 ---
 apiVersion: v1
 kind: Service
@@ -266,34 +183,27 @@ EOF
                     sleep 60
 
                     echo "=== Configuration des permissions MySQL ==="
-                    for i in \$(seq 1 30); do
+                    # Attendre que le pod soit prêt
+                    for i in \$(seq 1 20); do
                         POD_NAME=\$(kubectl get pods -n devops -l app=mysql -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
                         if [ -n "\$POD_NAME" ]; then
+                            echo "Tentative \$i/20: Vérification du pod \$POD_NAME..."
                             if kubectl get pod -n devops \$POD_NAME -o jsonpath='{.status.phase}' 2>/dev/null | grep -q Running; then
-                                sleep 10
+                                sleep 10  # Donner plus de temps
 
-                                if kubectl exec -n devops \$POD_NAME -- mysqladmin ping -h localhost -u root -proot123 2>/dev/null; then
-                                    echo "✅ MySQL est prêt. Configuration des permissions..."
-
-                                    cat > /tmp/setup-mysql.sql << 'EOF2'
-CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY 'root123';
-CREATE USER IF NOT EXISTS 'root'@'localhost' IDENTIFIED BY 'root123';
-GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION;
-GRANT ALL PRIVILEGES ON *.* TO 'root'@'localhost' WITH GRANT OPTION;
-CREATE DATABASE IF NOT EXISTS springdb CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-FLUSH PRIVILEGES;
-SELECT User, Host FROM mysql.user;
-EOF2
-
-                                    kubectl cp /tmp/setup-mysql.sql devops/\$POD_NAME:/tmp/setup-mysql.sql
-                                    kubectl exec -n devops \$POD_NAME -- mysql -u root -proot123 < /tmp/setup-mysql.sql
-
-                                    echo "✅ Permissions MySQL configurées"
-                                    break
-                                fi
+                                # Fix MySQL permissions
+                                echo "✅ MySQL est en cours d'exécution. Configuration des permissions..."
+                                kubectl exec -n devops \$POD_NAME -- mysql -u root -proot123 -e "
+                                    CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY 'root123';
+                                    GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION;
+                                    FLUSH PRIVILEGES;
+                                    CREATE DATABASE IF NOT EXISTS springdb;
+                                    SELECT '✅ Base de données créée' as Status;
+                                " 2>/dev/null || echo "⚠️  Erreur lors de la configuration, réessayer..."
+                                break
                             fi
                         fi
-                        echo "⏱️  Attente MySQL... (\$i/30)"
+                        echo "⏱️  Attente MySQL... (\$i/20)"
                         sleep 10
                     done
 
@@ -303,9 +213,9 @@ EOF2
             }
         }
 
-        stage('Deploy Spring Boot from Docker Hub') {
+        stage('Deploy Spring Boot Application') {
             steps {
-                echo "🚀 Déploiement de l'application Spring Boot depuis Docker Hub..."
+                echo "🚀 Déploiement de l'application Spring Boot..."
                 script {
                     String yamlContent = """apiVersion: v1
 kind: Service
@@ -338,13 +248,13 @@ spec:
     spec:
       containers:
       - name: spring-app
-        image: ${IMAGE_FULL_NAME}:${IMAGE_TAG}  # Image depuis Docker Hub
-        # No need for imagePullPolicy: Never anymore
+        image: ${IMAGE_NAME}:${IMAGE_TAG}
+        imagePullPolicy: Never
         ports:
         - containerPort: 8080
         env:
         - name: SPRING_DATASOURCE_URL
-          value: "jdbc:mysql://mysql-service:3306/springdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&createDatabaseIfNotExist=true"
+          value: "jdbc:mysql://mysql-service:3306/springdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
         - name: SPRING_DATASOURCE_USERNAME
           value: "root"
         - name: SPRING_DATASOURCE_PASSWORD
@@ -353,16 +263,10 @@ spec:
           value: "com.mysql.cj.jdbc.Driver"
         - name: SPRING_JPA_HIBERNATE_DDL_AUTO
           value: "update"
-        - name: SPRING_JPA_SHOW_SQL
-          value: "true"
-        - name: LOGGING_LEVEL_ROOT
-          value: "INFO"
         - name: SERVER_SERVLET_CONTEXT_PATH
           value: "${CONTEXT_PATH}"
         - name: SPRING_APPLICATION_NAME
           value: "foyer-app"
-        - name: SERVER_PORT
-          value: "8080"
         resources:
           requests:
             memory: "512Mi"
@@ -379,8 +283,8 @@ spec:
                     echo "=== Application du déploiement ==="
                     kubectl apply -f spring-deployment.yaml
 
-                    echo "=== Attente du démarrage (120 secondes) ==="
-                    sleep 120
+                    echo "=== Attente du démarrage (90 secondes) ==="
+                    sleep 90
 
                     echo "=== Vérification de l'état ==="
                     kubectl get pods,svc -n ${K8S_NAMESPACE}
@@ -411,13 +315,13 @@ spec:
                     MINIKUBE_IP=\$(minikube ip)
 
                     echo "Tentative de connexion..."
+                    # CORRECTED FOR LOOP - using seq instead of {1..10} expansion
                     for i in \$(seq 1 10); do
                         echo "Tentative \$i/10..."
                         if curl -s -f -m 10 "http://\${MINIKUBE_IP}:30080${CONTEXT_PATH}/actuator/health"; then
-                            echo "✅ Application accessible!"
+                            echo "✅ Application accessible avec contexte path!"
                             echo "=== Test de l'API Foyer ==="
                             curl -s "http://\${MINIKUBE_IP}:30080${CONTEXT_PATH}/foyer/getAllFoyers"
-                            echo ""
                             break
                         elif curl -s -f -m 10 "http://\${MINIKUBE_IP}:30080/actuator/health"; then
                             echo "✅ Application accessible (sans contexte path)"
@@ -434,6 +338,58 @@ spec:
                 """
             }
         }
+
+        stage('Debug Application') {
+            steps {
+                echo "🐛 Debug de l'application..."
+                sh """
+                    echo "=== Vérification interne de l'application ==="
+                    POD_NAME=\$(kubectl get pods -n ${K8S_NAMESPACE} -l app=spring-app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+
+                    if [ -n "\$POD_NAME" ]; then
+                        echo "1. Vérification des logs d'erreur..."
+                        kubectl logs -n ${K8S_NAMESPACE} \$POD_NAME --tail=200 | grep -i error || echo "Aucune erreur trouvée"
+
+                        echo ""
+                        echo "2. Test de l'application depuis l'intérieur du pod..."
+                        kubectl exec -n ${K8S_NAMESPACE} \$POD_NAME -- sh -c "
+                            if command -v curl > /dev/null; then
+                                echo 'Test avec curl depuis le pod:'
+                                curl -s http://localhost:8080${CONTEXT_PATH}/actuator/health || echo 'Échec avec contexte path'
+                                curl -s http://localhost:8080/actuator/health || echo 'Échec sans contexte path'
+                            else
+                                echo 'Installation de curl...'
+                                apk add --no-cache curl 2>/dev/null || apt-get update && apt-get install -y curl 2>/dev/null
+                                curl -s http://localhost:8080${CONTEXT_PATH}/actuator/health || echo 'Échec avec contexte path'
+                                curl -s http://localhost:8080/actuator/health || echo 'Échec sans contexte path'
+                            fi
+                        "
+
+                        echo ""
+                        echo "3. Vérification des processus en cours d'exécution..."
+                        kubectl exec -n ${K8S_NAMESPACE} \$POD_NAME -- ps aux
+
+                        echo ""
+                        echo "4. Vérification des ports en écoute..."
+                        kubectl exec -n ${K8S_NAMESPACE} \$POD_NAME -- netstat -tlnp 2>/dev/null || kubectl exec -n ${K8S_NAMESPACE} \$POD_NAME -- ss -tlnp 2>/dev/null || echo "Impossible de vérifier les ports"
+                    fi
+
+                    echo ""
+                    echo "=== Vérification de la connexion MySQL ==="
+                    MYSQL_POD=\$(kubectl get pods -n ${K8S_NAMESPACE} -l app=mysql -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+                    if [ -n "\$MYSQL_POD" ]; then
+                        echo "Test de connexion à MySQL depuis le pod Spring Boot..."
+                        kubectl exec -n ${K8S_NAMESPACE} \$POD_NAME -- sh -c "
+                            if command -v curl > /dev/null; then
+                                curl -s mysql-service:3306 && echo 'MySQL accessible' || echo 'MySQL inaccessible'
+                            else
+                                timeout 2 bash -c 'cat < /dev/null > /dev/tcp/mysql-service/3306' 2>/dev/null && echo 'MySQL accessible' || echo 'MySQL inaccessible'
+                            fi
+                        "
+                    fi
+                """
+            }
+        }
     }
 
     post {
@@ -443,17 +399,14 @@ spec:
             // Nettoyage
             sh '''
                 echo "=== Nettoyage des fichiers temporaires ==="
-                rm -f Dockerfile.jenkins spring-deployment.yaml /tmp/mysql-deployment.yaml /tmp/mysql-storage.yaml /tmp/setup-mysql.sql 2>/dev/null || true
+                rm -f Dockerfile.jenkins spring-deployment.yaml /tmp/mysql-deployment.yaml /tmp/mysql-storage.yaml 2>/dev/null || true
             '''
 
             // Rapport final
             script {
                 sh """
                     echo "=== RAPPORT FINAL ==="
-                    echo "Build: ${BUILD_NUMBER}"
-                    echo "Docker Hub Image: ${IMAGE_FULL_NAME}:${IMAGE_TAG}"
-                    echo "Latest Image: ${IMAGE_FULL_NAME}:latest"
-                    echo "Docker Hub URL: https://hub.docker.com/r/${DOCKERHUB_NAMESPACE}/${IMAGE_NAME}"
+                    echo "Image Docker: ${IMAGE_NAME}:${IMAGE_TAG}"
                     echo "Namespace: ${K8S_NAMESPACE}"
                     echo "Contexte path: ${CONTEXT_PATH}"
 
@@ -464,8 +417,9 @@ spec:
                     echo "API Foyer: http://\${MINIKUBE_IP}:30080${CONTEXT_PATH}/foyer/getAllFoyers"
                     echo ""
                     echo "=== Pour tester manuellement ==="
-                    echo "1. Tester l'API: curl http://\${MINIKUBE_IP}:30080${CONTEXT_PATH}/foyer/getAllFoyers"
-                    echo "2. Vérifier l'image: docker pull ${IMAGE_FULL_NAME}:${IMAGE_TAG}"
+                    echo "1. Test MySQL: kubectl exec -n devops -it \$(kubectl get pods -n devops -l app=mysql -o name | head -1) -- mysql -u root -proot123"
+                    echo "2. Test Spring Boot: curl -s http://\${MINIKUBE_IP}:30080${CONTEXT_PATH}/actuator/health"
+                    echo "3. Test API: curl -s http://\${MINIKUBE_IP}:30080${CONTEXT_PATH}/foyer/getAllFoyers"
                 """
             }
         }
@@ -475,17 +429,20 @@ spec:
             script {
                 sh """
                     echo "=== DEBUG INFO ==="
-                    echo "1. État des pods:"
-                    kubectl get pods -n ${K8S_NAMESPACE} -o wide || true
+                    echo "1. Pods MySQL:"
+                    kubectl get pods -n ${K8S_NAMESPACE} -l app=mysql -o wide || true
                     echo ""
                     echo "2. Logs MySQL:"
                     kubectl logs -n ${K8S_NAMESPACE} -l app=mysql --tail=100 || true
                     echo ""
-                    echo "3. Logs Spring Boot:"
+                    echo "3. Pods Spring Boot:"
+                    kubectl get pods -n ${K8S_NAMESPACE} -l app=spring-app -o wide || true
+                    echo ""
+                    echo "4. Logs Spring Boot:"
                     kubectl logs -n ${K8S_NAMESPACE} -l app=spring-app --tail=200 || true
                     echo ""
-                    echo "4. Événements:"
-                    kubectl get events -n ${K8S_NAMESPACE} --sort-by='.lastTimestamp' | tail -30 || true
+                    echo "5. Événements:"
+                    kubectl get events -n ${K8S_NAMESPACE} --sort-by='.lastTimestamp' | tail -20 || true
                 """
             }
         }
