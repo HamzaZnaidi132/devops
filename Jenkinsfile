@@ -128,7 +128,7 @@ spec:
         - name: MYSQL_ROOT_HOST
           value: "%"
         - name: MYSQL_ALLOW_EMPTY_PASSWORD
-          value: "no
+          value: "no"
         ports:
         - containerPort: 3306
         volumeMounts:
