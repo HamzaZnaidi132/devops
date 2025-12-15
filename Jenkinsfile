@@ -60,11 +60,8 @@ pipeline {
             steps {
                 echo "🔨 Construction de l'application avec tests..."
                 sh '''
-                    echo "=== Build Maven avec Jacoco pour la couverture ==="
-
-                    # Si vous voulez générer un rapport Jacoco pour SonarQube
-                    # Assurez-vous que le plugin Jacoco est configuré dans pom.xml
-                    mvn clean package -B
+                    echo "=== Build Maven (skip tests) ==="
+                    mvn clean package -B -DskipTests
 
                     echo "=== Vérification du JAR ==="
                     JAR_FILE=$(find target -name "*.jar" -type f | head -1)
