@@ -282,6 +282,7 @@ EOF
             }
         }
 
+
         stage('Deploy Spring Boot Application') {
             steps {
                 echo "🚀 Déploiement de l'application Spring Boot..."
