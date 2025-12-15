@@ -285,10 +285,9 @@ EOF
         stage('Deploy Spring Boot Application') {
             steps {
                 echo "🚀 Déploiement de l'application Spring Boot..."
-                script {
-                    // Create the YAML file directly without extra indentation
-                    sh """
-                        cat > spring-deployment.yaml << 'EOF'
+                sh """
+                    # Create the YAML file
+                    cat > spring-deployment.yaml << 'EOF'
         apiVersion: v1
         kind: Service
         metadata:
@@ -379,51 +378,48 @@ EOF
                     memory: "1Gi"
                     cpu: "500m"
         EOF
-                    """
 
-                    sh """
-                        echo "=== Vérification du YAML ==="
-                        cat spring-deployment.yaml
+                    echo "=== Vérification du YAML ==="
+                    cat spring-deployment.yaml
 
-                        echo "=== Validation du YAML (dry-run) ==="
-                        kubectl apply -f spring-deployment.yaml --dry-run=client || exit 1
+                    echo "=== Validation du YAML (dry-run) ==="
+                    kubectl apply -f spring-deployment.yaml --dry-run=client || exit 1
 
-                        echo "=== Application du déploiement ==="
-                        kubectl apply -f spring-deployment.yaml
+                    echo "=== Application du déploiement ==="
+                    kubectl apply -f spring-deployment.yaml
 
-                        echo "=== Attente du démarrage ==="
-                        sleep 30
+                    echo "=== Attente du démarrage ==="
+                    sleep 30
 
-                        echo "=== Surveillance du pod ==="
-                        for i in {1..30}; do
-                            echo "Tentative \$i/30..."
-                            POD_STATUS=\$(kubectl get pod -n ${K8S_NAMESPACE} -l app=spring-app -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Not Found")
-                            echo "Pod status: \$POD_STATUS"
+                    echo "=== Surveillance du pod ==="
+                    for i in {1..30}; do
+                        echo "Tentative \$i/30..."
+                        POD_STATUS=\$(kubectl get pod -n ${K8S_NAMESPACE} -l app=spring-app -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Not Found")
+                        echo "Pod status: \$POD_STATUS"
 
-                            if [ "\$POD_STATUS" = "Running" ]; then
-                                echo "✅ Pod est en cours d'exécution"
-                                break
-                            elif [ "\$POD_STATUS" = "Pending" ] || [ "\$POD_STATUS" = "ContainerCreating" ]; then
-                                POD_NAME=\$(kubectl get pods -n ${K8S_NAMESPACE} -l app=spring-app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-                                if [ -n "\$POD_NAME" ]; then
-                                    echo "=== Événements du pod ==="
-                                    kubectl describe pod \$POD_NAME -n ${K8S_NAMESPACE} | grep -A 20 "Events:" || true
-                                fi
-                            elif [ "\$POD_STATUS" = "Error" ] || [ "\$POD_STATUS" = "Failed" ]; then
-                                echo "❌ Pod a échoué"
-                                POD_NAME=\$(kubectl get pods -n ${K8S_NAMESPACE} -l app=spring-app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-                                if [ -n "\$POD_NAME" ]; then
-                                    kubectl logs \$POD_NAME -n ${K8S_NAMESPACE} --tail=50 || true
-                                fi
-                                exit 1
+                        if [ "\$POD_STATUS" = "Running" ]; then
+                            echo "✅ Pod est en cours d'exécution"
+                            break
+                        elif [ "\$POD_STATUS" = "Pending" ] || [ "\$POD_STATUS" = "ContainerCreating" ]; then
+                            POD_NAME=\$(kubectl get pods -n ${K8S_NAMESPACE} -l app=spring-app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+                            if [ -n "\$POD_NAME" ]; then
+                                echo "=== Événements du pod ==="
+                                kubectl describe pod \$POD_NAME -n ${K8S_NAMESPACE} | grep -A 20 "Events:" || true
                             fi
-                            sleep 10
-                        done
+                        elif [ "\$POD_STATUS" = "Error" ] || [ "\$POD_STATUS" = "Failed" ]; then
+                            echo "❌ Pod a échoué"
+                            POD_NAME=\$(kubectl get pods -n ${K8S_NAMESPACE} -l app=spring-app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+                            if [ -n "\$POD_NAME" ]; then
+                                kubectl logs \$POD_NAME -n ${K8S_NAMESPACE} --tail=50 || true
+                            fi
+                            exit 1
+                        fi
+                        sleep 10
+                    done
 
-                        echo "=== État final ==="
-                        kubectl get pods,svc,deploy -n ${K8S_NAMESPACE} -o wide
-                    """
-                }
+                    echo "=== État final ==="
+                    kubectl get pods,svc,deploy -n ${K8S_NAMESPACE} -o wide
+                """
             }
         }
 
