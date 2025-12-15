@@ -388,6 +388,43 @@ spec:
                 """
             }
         }
+        stage('Diagnose Issues') {
+            steps {
+                echo "🩺 Diagnostic des problèmes..."
+                sh """
+                    echo "=== Diagnostic complet ==="
+
+                    # Vérifier l'état des ressources
+                    echo "1. État des ressources cluster:"
+                    kubectl get all -n ${K8S_NAMESPACE} 2>/dev/null || echo "Cluster inaccessible"
+
+                    echo ""
+                    echo "2. Détails du pod Spring Boot:"
+                    POD_NAME=\$(kubectl get pods -n ${K8S_NAMESPACE} -l app=spring-app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+                    if [ -n "\$POD_NAME" ]; then
+                        kubectl describe pod -n ${K8S_NAMESPACE} \$POD_NAME
+                    fi
+
+                    echo ""
+                    echo "3. Logs complets Spring Boot:"
+                    if [ -n "\$POD_NAME" ]; then
+                        kubectl logs -n ${K8S_NAMESPACE} \$POD_NAME
+                    fi
+
+                    echo ""
+                    echo "4. Test de connexion à MySQL depuis l'intérieur du pod:"
+                    if [ -n "\$POD_NAME" ]; then
+                        kubectl exec -n ${K8S_NAMESPACE} \$POD_NAME -- sh -c "
+                            echo 'Test de connexion réseau à MySQL...'
+                            nc -z -v mysql-service 3306
+                            echo ''
+                            echo 'Test de résolution DNS...'
+                            nslookup mysql-service || cat /etc/resolv.conf
+                        " 2>/dev/null || echo "Impossible d'exécuter les tests"
+                    fi
+                """
+            }
+        }
 
         stage('Verify Application Startup') {
             steps {
