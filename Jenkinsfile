@@ -5,7 +5,7 @@ pipeline {
         IMAGE_NAME = "saiffrikhi/foyer_project"
         IMAGE_TAG = "${BUILD_NUMBER}"
         K8S_NAMESPACE = "devops"
-        CONTEXT_PATH = "/tp-foyer"  // Rétabli le contexte path original
+        CONTEXT_PATH = "/tp-foyer"
     }
 
     triggers {
@@ -71,12 +71,13 @@ spec:
   hostPath:
     path: "/data/mysql"
     type: DirectoryOrCreate
+  storageClassName: ""
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: mysql-pvc
-  namespace: ${K8S_NAMESPACE}
+  namespace: devops
 spec:
   accessModes:
     - ReadWriteOnce
@@ -84,8 +85,12 @@ spec:
     requests:
       storage: 2Gi
   volumeName: mysql-pv
+  storageClassName: ""
 EOF
                     kubectl apply -f /tmp/mysql-storage.yaml
+
+                    echo "=== Attente que le PVC soit lié ==="
+                    sleep 10
 
                     echo "=== Vérification du PV et PVC ==="
                     kubectl get pv
@@ -97,9 +102,10 @@ EOF
         stage('Deploy MySQL') {
             steps {
                 echo "🗄️  Déploiement de MySQL..."
-                sh """
-                    echo "=== Création du déploiement MySQL ==="
-                    cat > /tmp/mysql-deployment.yaml << 'EOF'
+                script {
+                    sh """
+                        echo "=== Création du déploiement MySQL ==="
+                        cat > /tmp/mysql-deployment.yaml << 'EOF'
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -164,63 +170,91 @@ spec:
       targetPort: 3306
   type: ClusterIP
 EOF
-                    kubectl apply -f /tmp/mysql-deployment.yaml
+                        kubectl apply -f /tmp/mysql-deployment.yaml
 
-                    echo "=== Attente du démarrage de MySQL ==="
-                    for i in {1..30}; do
-                        echo "Tentative $i/30..."
-                        if kubectl get pods -n ${K8S_NAMESPACE} -l app=mysql -o jsonpath='{.items[0].status.phase}' 2>/dev/null | grep -q Running; then
-                            echo "✅ MySQL est en cours d'exécution."
-                            sleep 10  # Donner plus de temps pour l'initialisation
-                            break
-                        fi
-                        sleep 10
-                    done
+                        echo "=== Attente du démarrage de MySQL ==="
+                        def attempts = 30
+                        def mysqlReady = false
 
-                    echo "=== Vérification finale ==="
-                    kubectl get pods,svc -n ${K8S_NAMESPACE}
-                """
+                        for (int attempt = 1; attempt <= attempts; attempt++) {
+                            echo "Tentative \${attempt}/\${attempts}..."
+                            sleep 10
+
+                            def podStatus = sh(script: "kubectl get pods -n ${K8S_NAMESPACE} -l app=mysql -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo 'Not Found'", returnStdout: true).trim()
+
+                            if (podStatus == "Running") {
+                                echo "✅ MySQL est en cours d'exécution."
+                                mysqlReady = true
+                                sleep 10  // Donner plus de temps pour l'initialisation
+                                break
+                            }
+                        }
+
+                        if (!mysqlReady) {
+                            echo "❌ MySQL n'a pas démarré dans le temps imparti"
+                            sh """
+                                echo "=== Logs MySQL ==="
+                                kubectl logs -n ${K8S_NAMESPACE} -l app=mysql --tail=50
+                                echo "=== Détails du pod MySQL ==="
+                                kubectl describe pod -n ${K8S_NAMESPACE} -l app=mysql
+                            """
+                            error("MySQL n'a pas démarré")
+                        }
+
+                        echo "=== Vérification finale ==="
+                        sh "kubectl get pods,svc -n ${K8S_NAMESPACE}"
+                    """
+                }
             }
         }
 
         stage('Test MySQL Connection') {
             steps {
                 echo "🔍 Test de connexion à MySQL..."
-                sh """
-                    echo "=== Test de connexion à MySQL ==="
-                    timeout=120
-                    interval=5
-                    elapsed=0
+                script {
+                    sh """
+                        echo "=== Test de connexion à MySQL ==="
+                        def timeout = 120
+                        def interval = 5
+                        def elapsed = 0
+                        def mysqlConnected = false
 
-                    while [ \$elapsed -lt \$timeout ]; do
-                        POD_NAME=\$(kubectl get pods -n ${K8S_NAMESPACE} -l app=mysql -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+                        while (elapsed < timeout) {
+                            def podName = sh(script: "kubectl get pods -n ${K8S_NAMESPACE} -l app=mysql -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo ''", returnStdout: true).trim()
 
-                        if [ -n "\$POD_NAME" ]; then
-                            echo "Test de connexion au pod MySQL: \$POD_NAME"
-                            if kubectl exec -n ${K8S_NAMESPACE} \$POD_NAME -- mysqladmin ping -h localhost -u root -proot123 2>/dev/null; then
-                                echo "✅ MySQL est accessible!"
+                            if (podName) {
+                                echo "Test de connexion au pod MySQL: \${podName}"
+                                def testResult = sh(script: "kubectl exec -n ${K8S_NAMESPACE} \${podName} -- mysqladmin ping -h localhost -u root -proot123 2>/dev/null && echo 'SUCCESS' || echo 'FAILED'", returnStdout: true).trim()
 
-                                # Vérifier/Créer la base de données
-                                kubectl exec -n ${K8S_NAMESPACE} \$POD_NAME -- mysql -u root -proot123 -e "
-                                    CREATE DATABASE IF NOT EXISTS springdb;
-                                    SHOW DATABASES;
-                                " 2>/dev/null && echo "✅ Base de données vérifiée/créée"
-                                break
-                            fi
-                        fi
+                                if (testResult == "SUCCESS") {
+                                    echo "✅ MySQL est accessible!"
 
-                        echo "⏱️  Attente... (\$elapsed/\$timeout secondes)"
-                        sleep \$interval
-                        elapsed=\$((elapsed + interval))
-                    done
+                                    // Vérifier/Créer la base de données
+                                    sh """
+                                        kubectl exec -n ${K8S_NAMESPACE} \${podName} -- mysql -u root -proot123 -e "
+                                            CREATE DATABASE IF NOT EXISTS springdb;
+                                            SHOW DATABASES;
+                                        " 2>/dev/null || true
+                                    """
+                                    echo "✅ Base de données vérifiée/créée"
+                                    mysqlConnected = true
+                                    break
+                                }
+                            }
 
-                    if [ \$elapsed -ge \$timeout ]; then
-                        echo "❌ Timeout en attendant MySQL"
-                        echo "=== Logs MySQL ==="
-                        kubectl logs -n ${K8S_NAMESPACE} -l app=mysql --tail=50
-                        exit 1
-                    fi
-                """
+                            echo "⏱️  Attente... (\${elapsed}/\${timeout} secondes)"
+                            sleep interval
+                            elapsed += interval
+                        }
+
+                        if (!mysqlConnected) {
+                            echo "❌ Timeout en attendant MySQL"
+                            echo "=== Logs MySQL ==="
+                            sh "kubectl logs -n ${K8S_NAMESPACE} -l app=mysql --tail=50"
+                            error("MySQL n'est pas accessible")
+                        }
+                    """
+                }
             }
         }
 
@@ -404,7 +438,7 @@ spec:
                         echo "Test 2: http://\${MINIKUBE_IP}:30080/actuator/health"
 
                         # Essayer plusieurs fois avec différents chemins
-                        for attempt in {1..10}; do
+                        for attempt in \$(seq 1 10); do
                             echo ""
                             echo "Tentative \$attempt..."
 
@@ -428,63 +462,6 @@ spec:
                         echo ""
                         echo "=== Vérification finale des services ==="
                         kubectl get svc -n ${K8S_NAMESPACE}
-                    """
-                }
-            }
-        }
-
-        stage('Debug if Needed') {
-            when {
-                expression { currentBuild.result == 'FAILURE' || currentBuild.result == 'UNSTABLE' }
-            }
-            steps {
-                echo "🐛 Debug avancé..."
-                script {
-                    sh """
-                        echo "=== DIAGNOSTIC COMPLET ==="
-
-                        echo "1. Tous les pods:"
-                        kubectl get pods -n ${K8S_NAMESPACE} -o wide
-
-                        echo ""
-                        echo "2. Événements récents:"
-                        kubectl get events -n ${K8S_NAMESPACE} --sort-by='.lastTimestamp' | tail -30
-
-                        echo ""
-                        echo "3. Logs MySQL:"
-                        MYSQL_POD=\$(kubectl get pods -n ${K8S_NAMESPACE} -l app=mysql -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "none")
-                        if [ "\$MYSQL_POD" != "none" ]; then
-                            kubectl logs -n ${K8S_NAMESPACE} \$MYSQL_POD --tail=50
-                        fi
-
-                        echo ""
-                        echo "4. Logs Spring Boot:"
-                        SPRING_POD=\$(kubectl get pods -n ${K8S_NAMESPACE} -l app=spring-app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "none")
-                        if [ "\$SPRING_POD" != "none" ]; then
-                            kubectl logs -n ${K8S_NAMESPACE} \$SPRING_POD --tail=100
-
-                            echo ""
-                            echo "=== Test depuis l'intérieur du pod ==="
-                            kubectl exec -n ${K8S_NAMESPACE} \$SPRING_POD -- sh -c "
-                                echo 'Test MySQL depuis le pod:'
-                                nc -zv mysql-service 3306 && echo '✅ MySQL accessible' || echo '❌ MySQL inaccessible'
-
-                                echo 'Variables d\\'environnement:'
-                                env | grep -i spring
-                                env | grep -i server
-                            " || true
-                        fi
-
-                        echo ""
-                        echo "=== COMMANDES DE DÉPANNAGE ==="
-                        echo "1. Accéder à MySQL:"
-                        echo "   kubectl run mysql-client -n ${K8S_NAMESPACE} --rm -it --image=mysql:8.0 -- mysql -h mysql-service -u root -proot123"
-                        echo ""
-                        echo "2. Accéder au pod Spring Boot:"
-                        echo "   kubectl exec -n ${K8S_NAMESPACE} \$(kubectl get pods -n ${K8S_NAMESPACE} -l app=spring-app -o jsonpath='{.items[0].metadata.name}') -- sh"
-                        echo ""
-                        echo "3. Vérifier le PV/PVC:"
-                        echo "   kubectl get pv,pvc -A"
                     """
                 }
             }
@@ -539,7 +516,6 @@ spec:
         failure {
             echo "💥 Le pipeline a échoué"
             script {
-                // Envoyer des notifications si nécessaire
                 echo "Le pipeline a échoué au build ${BUILD_NUMBER}"
             }
         }
