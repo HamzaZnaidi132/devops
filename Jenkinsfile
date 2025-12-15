@@ -7,7 +7,7 @@ pipeline {
         K8S_NAMESPACE = "devops"
         CONTEXT_PATH = "/tp-foyer"
         DOCKERHUB_CREDENTIALS = credentials('docker-hub')
-        SONAR_HOST_URL = "http://192.168.59.100:9000"  // Remplacez par votre IP Minikube/SonarQube
+        SONAR_HOST_URL = "http://172.30.40.173:9000"  // Remplacez par votre IP Minikube/SonarQube
         SONAR_PROJECT_KEY = "foyer-project"
         SONAR_TOKEN = credentials('sonar-token')  // Credential créé dans Jenkins
     }
