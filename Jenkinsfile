@@ -7,9 +7,9 @@ pipeline {
         K8S_NAMESPACE = "devops"
         CONTEXT_PATH = "/tp-foyer"
         DOCKERHUB_CREDENTIALS = credentials('docker-hub')
-        SONAR_HOST_URL = "http://172.30.40.173:9000"  // Remplacez par votre IP Minikube/SonarQube
+        SONAR_HOST_URL = "http://172.30.40.173:9000"
         SONAR_PROJECT_KEY = "foyer-project"
-        SONAR_TOKEN = credentials('sonar-token')  // Credential créé dans Jenkins
+        SONAR_TOKEN = credentials('sonar-token')
     }
 
     triggers {
@@ -24,6 +24,136 @@ pipeline {
             }
         }
 
+        stage('Deploy Test MySQL') {
+            steps {
+                echo "🗄️  Déploiement de MySQL pour les tests..."
+                script {
+                    // Create namespace if it doesn't exist
+                    sh """
+                        kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                    """
+
+                    // Deploy MySQL for testing
+                    String mysqlTestYaml = """
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: test-mysql-pv
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: "/tmp/test-mysql-data"
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-mysql-pvc
+  namespace: ${K8S_NAMESPACE}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-mysql
+  namespace: ${K8S_NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-mysql
+  template:
+    metadata:
+      labels:
+        app: test-mysql
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:8.0
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          value: "root123"
+        - name: MYSQL_DATABASE
+          value: "springdb"
+        ports:
+        - containerPort: 3306
+        volumeMounts:
+        - name: mysql-storage
+          mountPath: /var/lib/mysql
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "250m"
+      volumes:
+      - name: mysql-storage
+        persistentVolumeClaim:
+          claimName: test-mysql-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-mysql-service
+  namespace: ${K8S_NAMESPACE}
+spec:
+  selector:
+    app: test-mysql
+  ports:
+    - port: 3306
+      targetPort: 3306
+  type: ClusterIP
+"""
+
+                    writeFile file: 'test-mysql.yaml', text: mysqlTestYaml
+                    sh """
+                        kubectl apply -f test-mysql.yaml
+
+                        echo "⏱️  Attente du démarrage de MySQL pour les tests..."
+                        # Wait for MySQL pod to be ready
+                        for i in \$(seq 1 30); do
+                            POD_NAME=\$(kubectl get pods -n ${K8S_NAMESPACE} -l app=test-mysql -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+                            if [ -n "\$POD_NAME" ]; then
+                                if kubectl get pod -n ${K8S_NAMESPACE} \$POD_NAME -o jsonpath='{.status.phase}' 2>/dev/null | grep -q Running; then
+                                    echo "✅ MySQL pour tests est prêt"
+
+                                    # Additional wait for MySQL to be fully ready
+                                    sleep 20
+
+                                    # Configure MySQL permissions
+                                    kubectl exec -n ${K8S_NAMESPACE} \$POD_NAME -- mysql -u root -proot123 -e "
+                                        CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY 'root123';
+                                        GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION;
+                                        FLUSH PRIVILEGES;
+                                        CREATE DATABASE IF NOT EXISTS springdb;
+                                        SELECT '✅ Base de données créée' as Status;
+                                    " 2>/dev/null || echo "⚠️  Configuration MySQL en cours..."
+
+                                    break
+                                fi
+                            fi
+                            echo "⏱️  Attente... (\$i/30)"
+                            sleep 10
+                        done
+
+                        # Get MySQL service IP
+                        MYSQL_SERVICE_IP=\$(kubectl get svc -n ${K8S_NAMESPACE} test-mysql-service -o jsonpath='{.spec.clusterIP}')
+                        echo "MySQL Service IP: \$MYSQL_SERVICE_IP"
+                    """
+                }
+            }
+        }
+
         stage('SonarQube Quality Gate') {
             steps {
                 echo "🔍 Analyse de la qualité du code avec SonarQube..."
@@ -31,8 +161,6 @@ pipeline {
                     withSonarQubeEnv('SonarQube') {
                         sh '''
                             echo "=== Démarrage de l'analyse SonarQube ==="
-
-                            # SKIP TESTS during SonarQube analysis
                             mvn clean verify sonar:sonar \
                                 -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
                                 -Dsonar.projectName="Foyer Project" \
@@ -43,7 +171,7 @@ pipeline {
                                 -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
                                 -Dsonar.sourceEncoding=UTF-8 \
                                 -Dsonar.host.url=${SONAR_HOST_URL} \
-                                -DskipTests=true  # ADD THIS LINE
+                                -DskipTests=true
 
                             sleep 30
                         '''
@@ -56,23 +184,52 @@ pipeline {
             }
         }
 
-        stage('Build & Test') {
+        stage('Build & Test with MySQL') {
             steps {
                 echo "🔨 Construction de l'application avec tests..."
-                sh '''
-                    echo "=== Build Maven (skip tests) ==="
-                    mvn clean package -B -DskipTests
+                script {
+                    // Get MySQL service IP for tests
+                    sh '''
+                        MYSQL_SERVICE_IP=$(kubectl get svc -n ${K8S_NAMESPACE} test-mysql-service -o jsonpath='{.spec.clusterIP}')
+                        echo "Using MySQL Service IP for tests: $MYSQL_SERVICE_IP"
 
-                    echo "=== Vérification du JAR ==="
-                    JAR_FILE=$(find target -name "*.jar" -type f | head -1)
-                    if [ -f "$JAR_FILE" ]; then
-                        echo "✅ JAR trouvé: $JAR_FILE"
-                        ls -lh "$JAR_FILE"
-                    else
-                        echo "❌ Aucun fichier JAR trouvé!"
-                        exit 1
-                    fi
-                '''
+                        echo "=== Build Maven with MySQL tests ==="
+                        # First build without tests to generate JAR
+                        mvn clean package -B -DskipTests
+
+                        echo "=== Running integration tests with MySQL ==="
+                        # Run tests with MySQL connection
+                        mvn test -B \
+                            -Dspring.datasource.url=jdbc:mysql://${MYSQL_SERVICE_IP}:3306/springdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC \
+                            -Dspring.datasource.username=root \
+                            -Dspring.datasource.password=root123 \
+                            -Dspring.jpa.hibernate.ddl-auto=update \
+                            -Dspring.jpa.properties.hibernate.dialect=org.hibernate.dialect.MySQL8Dialect
+
+                        echo "=== Vérification du JAR ==="
+                        JAR_FILE=$(find target -name "*.jar" -type f | head -1)
+                        if [ -f "$JAR_FILE" ]; then
+                            echo "✅ JAR trouvé: $JAR_FILE"
+                            ls -lh "$JAR_FILE"
+                        else
+                            echo "❌ Aucun fichier JAR trouvé!"
+                            exit 1
+                        fi
+                    '''
+                }
+            }
+
+            post {
+                always {
+                    echo "🧹 Nettoyage des ressources de test MySQL..."
+                    sh """
+                        kubectl delete deployment test-mysql -n ${K8S_NAMESPACE} --ignore-not-found=true
+                        kubectl delete service test-mysql-service -n ${K8S_NAMESPACE} --ignore-not-found=true
+                        kubectl delete pvc test-mysql-pvc -n ${K8S_NAMESPACE} --ignore-not-found=true
+                        kubectl delete pv test-mysql-pv --ignore-not-found=true
+                        rm -f test-mysql.yaml 2>/dev/null || true
+                    """
+                }
             }
         }
 
@@ -144,11 +301,11 @@ EOF
             }
         }
 
-        stage('Deploy MySQL - Alternative Storage') {
+        stage('Deploy MySQL - Application Database') {
             steps {
-                echo "🗄️  Déploiement de MySQL avec stockage alternatif..."
+                echo "🗄️  Déploiement de MySQL pour l'application..."
                 sh """
-                    echo "=== Création du PV et PVC MySQL (sans hostPath) ==="
+                    echo "=== Création du PV et PVC MySQL ==="
                     cat > /tmp/mysql-storage.yaml << 'EOF'
 apiVersion: v1
 kind: PersistentVolume
@@ -168,7 +325,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: mysql-pvc
-  namespace: devops
+  namespace: ${K8S_NAMESPACE}
 spec:
   accessModes:
     - ReadWriteOnce
@@ -184,7 +341,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: mysql
-  namespace: devops
+  namespace: ${K8S_NAMESPACE}
 spec:
   replicas: 1
   selector:
@@ -224,7 +381,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: mysql-service
-  namespace: devops
+  namespace: ${K8S_NAMESPACE}
 spec:
   selector:
     app: mysql
@@ -241,15 +398,15 @@ EOF
                     echo "=== Configuration des permissions MySQL ==="
                     # Attendre que le pod soit prêt
                     for i in \$(seq 1 20); do
-                        POD_NAME=\$(kubectl get pods -n devops -l app=mysql -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+                        POD_NAME=\$(kubectl get pods -n ${K8S_NAMESPACE} -l app=mysql -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
                         if [ -n "\$POD_NAME" ]; then
                             echo "Tentative \$i/20: Vérification du pod \$POD_NAME..."
-                            if kubectl get pod -n devops \$POD_NAME -o jsonpath='{.status.phase}' 2>/dev/null | grep -q Running; then
+                            if kubectl get pod -n ${K8S_NAMESPACE} \$POD_NAME -o jsonpath='{.status.phase}' 2>/dev/null | grep -q Running; then
                                 sleep 10  # Donner plus de temps
 
                                 # Fix MySQL permissions
                                 echo "✅ MySQL est en cours d'exécution. Configuration des permissions..."
-                                kubectl exec -n devops \$POD_NAME -- mysql -u root -proot123 -e "
+                                kubectl exec -n ${K8S_NAMESPACE} \$POD_NAME -- mysql -u root -proot123 -e "
                                     CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY 'root123';
                                     GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION;
                                     FLUSH PRIVILEGES;
@@ -331,7 +488,6 @@ spec:
             memory: "1Gi"
             cpu: "500m"
 """
-
                     writeFile file: 'spring-deployment.yaml', text: yamlContent
                 }
 
@@ -371,7 +527,6 @@ spec:
                     MINIKUBE_IP=\$(minikube ip)
 
                     echo "Tentative de connexion..."
-                    # CORRECTED FOR LOOP - using seq instead of {1..10} expansion
                     for i in \$(seq 1 10); do
                         echo "Tentative \$i/10..."
                         if curl -s -f -m 10 "http://\${MINIKUBE_IP}:30080${CONTEXT_PATH}/actuator/health"; then
@@ -489,6 +644,10 @@ spec:
                 echo "=== QUALITÉ DU CODE ==="
                 echo "✅ L'analyse SonarQube a été effectuée avec succès"
                 echo "📊 Consultez le rapport: ${SONAR_HOST_URL}/dashboard?id=${SONAR_PROJECT_KEY}"
+                echo ""
+                echo "=== DÉPLOIEMENT ==="
+                echo "✅ Application déployée avec succès sur Kubernetes"
+                echo "🌐 URL: http://\$(minikube ip):30080${CONTEXT_PATH}"
             """
         }
 
