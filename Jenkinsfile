@@ -7,10 +7,12 @@ pipeline {
         K8S_NAMESPACE = "devops"
         CONTEXT_PATH = "/tp-foyer"
         DOCKERHUB_CREDENTIALS = credentials('docker-hub')
-
+        SONAR_HOST_URL = "http://192.168.59.100:9000"  // Remplacez par votre IP Minikube/SonarQube
+        SONAR_PROJECT_KEY = "foyer-project"
+        SONAR_TOKEN = credentials('sonar-token')  // Credential créé dans Jenkins
     }
 
-    triggers{
+    triggers {
         githubPush()
     }
 
@@ -22,12 +24,50 @@ pipeline {
             }
         }
 
+        stage('SonarQube Quality Gate') {
+            steps {
+                echo "🔍 Analyse de la qualité du code avec SonarQube..."
+                script {
+                    // Configuration pour l'analyse SonarQube
+                    withSonarQubeEnv('SonarQube') { // Nom du serveur SonarQube configuré dans Jenkins
+                        sh '''
+                            echo "=== Démarrage de l'analyse SonarQube ==="
+
+                            # Option 1: Utilisation du scanner Maven (si plugin Sonar dans pom.xml)
+                            mvn clean verify sonar:sonar \
+                                -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                                -Dsonar.projectName="Foyer Project" \
+                                -Dsonar.sources=src/main/java \
+                                -Dsonar.tests=src/test/java \
+                                -Dsonar.java.binaries=target/classes \
+                                -Dsonar.java.libraries=target/**/*.jar \
+                                -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
+                                -Dsonar.sourceEncoding=UTF-8 \
+                                -Dsonar.host.url=${SONAR_HOST_URL} \
+                                -DskipTests=false
+
+                            # Attendre que l'analyse soit terminée
+                            sleep 30
+                        '''
+                    }
+
+                    // Attendre le résultat du Quality Gate
+                    timeout(time: 10, unit: 'MINUTES') {
+                        waitForQualityGate abortPipeline: true
+                    }
+                }
+            }
+        }
+
         stage('Build & Test') {
             steps {
-                echo "🔨 Construction de l'application..."
+                echo "🔨 Construction de l'application avec tests..."
                 sh '''
-                    echo "=== Build Maven ==="
-                    mvn clean package -DskipTests -B
+                    echo "=== Build Maven avec Jacoco pour la couverture ==="
+
+                    # Si vous voulez générer un rapport Jacoco pour SonarQube
+                    # Assurez-vous que le plugin Jacoco est configuré dans pom.xml
+                    mvn clean package -B
 
                     echo "=== Vérification du JAR ==="
                     JAR_FILE=$(find target -name "*.jar" -type f | head -1)
@@ -42,7 +82,7 @@ pipeline {
             }
         }
 
-        stage('Build Docker Image ') {
+        stage('Build Docker Image') {
             steps {
                 echo "🐳 Construction de l'image Docker..."
                 sh """
@@ -71,20 +111,20 @@ EOF
         }
 
         stage('Push to DockerHub') {
-                    steps {
-                        echo "🚀 Pushing image to DockerHub..."
-                        sh """
-                            echo "=== Login to DockerHub ==="
-                            echo "${DOCKERHUB_CREDENTIALS_PSW}" | docker login -u "${DOCKERHUB_CREDENTIALS_USR}" --password-stdin
+            steps {
+                echo "🚀 Pushing image to DockerHub..."
+                sh """
+                    echo "=== Login to DockerHub ==="
+                    echo "${DOCKERHUB_CREDENTIALS_PSW}" | docker login -u "${DOCKERHUB_CREDENTIALS_USR}" --password-stdin
 
-                            echo "=== Pushing image ==="
-                            docker push ${IMAGE_NAME}:${IMAGE_TAG}
+                    echo "=== Pushing image ==="
+                    docker push ${IMAGE_NAME}:${IMAGE_TAG}
 
-                            echo "=== Logout from DockerHub ==="
-                            docker logout
-                        """
-                    }
-                }
+                    echo "=== Logout from DockerHub ==="
+                    docker logout
+                """
+            }
+        }
 
         stage('Clean Old Resources - No Sudo') {
             steps {
@@ -418,31 +458,43 @@ spec:
         always {
             echo "🏁 Pipeline terminé"
 
+            // Ajouter un lien vers SonarQube
+            script {
+                echo "=== RAPPORT FINAL ==="
+                echo "Image Docker: ${IMAGE_NAME}:${IMAGE_TAG}"
+                echo "Namespace: ${K8S_NAMESPACE}"
+                echo "Contexte path: ${CONTEXT_PATH}"
+                echo ""
+                echo "=== Liens SonarQube ==="
+                echo "Dashboard SonarQube: ${SONAR_HOST_URL}/dashboard?id=${SONAR_PROJECT_KEY}"
+                echo "Projet SonarQube: ${SONAR_HOST_URL}/project/overview?id=${SONAR_PROJECT_KEY}"
+
+                MINIKUBE_IP=$(minikube ip)
+                echo ""
+                echo "=== URL d'accès ==="
+                echo "Application: http://${MINIKUBE_IP}:30080${CONTEXT_PATH}"
+                echo "API Foyer: http://${MINIKUBE_IP}:30080${CONTEXT_PATH}/foyer/getAllFoyers"
+                echo ""
+                echo "=== Pour tester manuellement ==="
+                echo "1. Test MySQL: kubectl exec -n devops -it \$(kubectl get pods -n devops -l app=mysql -o name | head -1) -- mysql -u root -proot123"
+                echo "2. Test Spring Boot: curl -s http://${MINIKUBE_IP}:30080${CONTEXT_PATH}/actuator/health"
+                echo "3. Test API: curl -s http://${MINIKUBE_IP}:30080${CONTEXT_PATH}/foyer/getAllFoyers"
+            }
+
             // Nettoyage
             sh '''
                 echo "=== Nettoyage des fichiers temporaires ==="
                 rm -f Dockerfile.jenkins spring-deployment.yaml /tmp/mysql-deployment.yaml /tmp/mysql-storage.yaml 2>/dev/null || true
             '''
+        }
 
-            // Rapport final
+        success {
+            echo "✅ Pipeline exécuté avec succès!"
             script {
-                sh """
-                    echo "=== RAPPORT FINAL ==="
-                    echo "Image Docker: ${IMAGE_NAME}:${IMAGE_TAG}"
-                    echo "Namespace: ${K8S_NAMESPACE}"
-                    echo "Contexte path: ${CONTEXT_PATH}"
-
-                    MINIKUBE_IP=\$(minikube ip)
-                    echo ""
-                    echo "=== URL d'accès ==="
-                    echo "Application: http://\${MINIKUBE_IP}:30080${CONTEXT_PATH}"
-                    echo "API Foyer: http://\${MINIKUBE_IP}:30080${CONTEXT_PATH}/foyer/getAllFoyers"
-                    echo ""
-                    echo "=== Pour tester manuellement ==="
-                    echo "1. Test MySQL: kubectl exec -n devops -it \$(kubectl get pods -n devops -l app=mysql -o name | head -1) -- mysql -u root -proot123"
-                    echo "2. Test Spring Boot: curl -s http://\${MINIKUBE_IP}:30080${CONTEXT_PATH}/actuator/health"
-                    echo "3. Test API: curl -s http://\${MINIKUBE_IP}:30080${CONTEXT_PATH}/foyer/getAllFoyers"
-                """
+                // Envoyer une notification ou créer un rapport
+                echo "=== QUALITÉ DU CODE ==="
+                echo "✅ L'analyse SonarQube a été effectuée avec succès"
+                echo "📊 Consultez le rapport: ${SONAR_HOST_URL}/dashboard?id=${SONAR_PROJECT_KEY}"
             }
         }
 
@@ -465,6 +517,10 @@ spec:
                     echo ""
                     echo "5. Événements:"
                     kubectl get events -n ${K8S_NAMESPACE} --sort-by='.lastTimestamp' | tail -20 || true
+                    echo ""
+                    echo "6. SonarQube Status:"
+                    echo "   URL: ${SONAR_HOST_URL}"
+                    echo "   Projet: ${SONAR_PROJECT_KEY}"
                 """
             }
         }
