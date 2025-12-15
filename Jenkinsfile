@@ -16,10 +16,6 @@ pipeline {
         SPRING_DB_PASSWORD = "root123"
     }
 
-        triggers {
-            githubPush()
-        }
-
     stages {
         stage('Checkout Code') {
             steps {
@@ -78,7 +74,7 @@ pipeline {
                     if (!dockerfileExists) {
                         echo "⚠️  Dockerfile non trouvé, création d'un Dockerfile..."
                         sh '''
-                            cat > Dockerfile << 'EOF'
+                            cat > Dockerfile << \'EOF\'
 FROM eclipse-temurin:17-jre-alpine
 WORKDIR /app
 COPY target/*.jar app.jar
@@ -106,7 +102,7 @@ EOF
                 )]) {
                     sh """
                         echo "=== Connexion à DockerHub ==="
-                        echo \$DOCKER_PASSWORD | docker login -u \$DOCKER_USERNAME --password-stdin
+                        echo \${DOCKER_PASSWORD} | docker login -u \${DOCKER_USERNAME} --password-stdin
 
                         echo "=== Construction de l'image Docker ==="
                         echo "Image: ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
@@ -183,7 +179,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: mysql-pvc
-  namespace: ${K8S_NAMESPACE}
+  namespace: ${env.K8S_NAMESPACE}
   labels:
     app: mysql
 spec:
@@ -202,7 +198,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: mysql
-  namespace: ${K8S_NAMESPACE}
+  namespace: ${env.K8S_NAMESPACE}
   labels:
     app: mysql
 spec:
@@ -222,9 +218,9 @@ spec:
         image: mysql:8.0
         env:
         - name: MYSQL_ROOT_PASSWORD
-          value: "${MYSQL_ROOT_PASSWORD}"
+          value: "${env.MYSQL_ROOT_PASSWORD}"
         - name: MYSQL_DATABASE
-          value: "${MYSQL_DATABASE}"
+          value: "${env.MYSQL_DATABASE}"
         - name: MYSQL_TCP_PORT
           value: "3306"
         ports:
@@ -269,7 +265,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: mysql-service
-  namespace: ${K8S_NAMESPACE}
+  namespace: ${env.K8S_NAMESPACE}
   labels:
     app: mysql
 spec:
@@ -351,30 +347,32 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: spring-config
-  namespace: ${K8S_NAMESPACE}
+  namespace: ${env.K8S_NAMESPACE}
 data:
   SPRING_APPLICATION_NAME: "foyer-app"
   SPRING_DATASOURCE_DRIVER_CLASS_NAME: "com.mysql.cj.jdbc.Driver"
   SPRING_JPA_HIBERNATE_DDL_AUTO: "update"
   SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT: "org.hibernate.dialect.MySQL8Dialect"
-  SERVER_SERVLET_CONTEXT_PATH: "${CONTEXT_PATH}"
+  SERVER_SERVLET_CONTEXT_PATH: "${env.CONTEXT_PATH}"
   SPRING_PROFILES_ACTIVE: "kubernetes"
 """
                     writeFile file: 'spring-configmap.yaml', text: configMapYaml
 
-                    // Create Secret for sensitive data
-                    String secretYaml = """
+                    // Create Secret for sensitive data - FIXED: Use sh command to generate base64
+                    sh '''
+                        echo "=== Création du fichier secret ==="
+                        cat > spring-secret.yaml << EOF
 apiVersion: v1
 kind: Secret
 metadata:
   name: spring-secret
-  namespace: ${K8S_NAMESPACE}
+  namespace: ''' + env.K8S_NAMESPACE + '''
 type: Opaque
 data:
-  SPRING_DATASOURCE_USERNAME: $(echo -n "${SPRING_DB_USERNAME}" | base64)
-  SPRING_DATASOURCE_PASSWORD: $(echo -n "${SPRING_DB_PASSWORD}" | base64)
-"""
-                    writeFile file: 'spring-secret.yaml', text: secretYaml
+  SPRING_DATASOURCE_USERNAME: $(echo -n ''' + env.SPRING_DB_USERNAME + ''' | base64)
+  SPRING_DATASOURCE_PASSWORD: $(echo -n ''' + env.SPRING_DB_PASSWORD + ''' | base64)
+EOF
+                    '''
 
                     // Create Spring Boot Deployment and Service
                     String springDeploymentYaml = """
@@ -382,7 +380,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: spring-app
-  namespace: ${K8S_NAMESPACE}
+  namespace: ${env.K8S_NAMESPACE}
   labels:
     app: spring-app
 spec:
@@ -402,14 +400,14 @@ spec:
     spec:
       containers:
       - name: spring-app
-        image: ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}
+        image: ${env.DOCKER_IMAGE_NAME}:${env.DOCKER_IMAGE_TAG}
         imagePullPolicy: Always  # Always pull from DockerHub
         ports:
         - containerPort: 8080
           name: http
         env:
         - name: SPRING_DATASOURCE_URL
-          value: "jdbc:mysql://mysql-service:3306/${MYSQL_DATABASE}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&useLegacyDatetimeCode=false"
+          value: "jdbc:mysql://mysql-service:3306/${env.MYSQL_DATABASE}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&useLegacyDatetimeCode=false"
         - name: SPRING_DATASOURCE_USERNAME
           valueFrom:
             secretKeyRef:
@@ -449,7 +447,7 @@ spec:
             cpu: "500m"
         livenessProbe:
           httpGet:
-            path: "${CONTEXT_PATH}/actuator/health/liveness"
+            path: "${env.CONTEXT_PATH}/actuator/health/liveness"
             port: 8080
           initialDelaySeconds: 90
           periodSeconds: 10
@@ -457,7 +455,7 @@ spec:
           failureThreshold: 3
         readinessProbe:
           httpGet:
-            path: "${CONTEXT_PATH}/actuator/health/readiness"
+            path: "${env.CONTEXT_PATH}/actuator/health/readiness"
             port: 8080
           initialDelaySeconds: 60
           periodSeconds: 5
@@ -465,7 +463,7 @@ spec:
           failureThreshold: 3
         startupProbe:
           httpGet:
-            path: "${CONTEXT_PATH}/actuator/health"
+            path: "${env.CONTEXT_PATH}/actuator/health"
             port: 8080
           initialDelaySeconds: 30
           periodSeconds: 10
@@ -476,7 +474,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: spring-service
-  namespace: ${K8S_NAMESPACE}
+  namespace: ${env.K8S_NAMESPACE}
   labels:
     app: spring-app
 spec:
@@ -492,8 +490,10 @@ spec:
                 }
 
                 sh """
-                    echo "=== Application des ConfigMaps et Secrets ==="
+                    echo "=== Application des ConfigMaps ==="
                     kubectl apply -f spring-configmap.yaml
+
+                    echo "=== Application des Secrets ==="
                     kubectl apply -f spring-secret.yaml
 
                     echo "=== Déploiement de l'application Spring Boot ==="
