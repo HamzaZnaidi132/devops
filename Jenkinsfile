@@ -66,15 +66,49 @@ pipeline {
             }
         }
 
-        stage('Pre-pull Image in Minikube') {
+        stage('Pre-pull Image Using Kubernetes Pod') {
             steps {
-                echo "📥 Pre-pulling image in Minikube..."
+                echo "📥 Pre-pulling image using Kubernetes pod..."
                 sh """
-                    echo "=== Pulling image in Minikube to warm cache ==="
-                    minikube ssh "docker pull ${IMAGE_NAME}:${IMAGE_TAG}"
+                    echo "=== Creating a pod to pre-pull the image ==="
+                    cat > /tmp/pre-pull.yaml << 'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: image-puller-${BUILD_NUMBER}
+  namespace: ${K8S_NAMESPACE}
+spec:
+  containers:
+  - name: puller
+    image: ${IMAGE_NAME}:${IMAGE_TAG}
+    command: ["sh", "-c", "echo 'Image pulled successfully' && sleep 3600"]
+    imagePullPolicy: Always
+  restartPolicy: Never
+EOF
 
-                    echo "=== Verifying image in Minikube ==="
-                    minikube ssh "docker images | grep ${IMAGE_NAME}"
+                    kubectl apply -f /tmp/pre-pull.yaml --namespace=${K8S_NAMESPACE}
+
+                    echo "=== Waiting for pod to pull image (2 minutes) ==="
+                    timeout 120 bash -c '
+                        while true; do
+                            PHASE=$(kubectl get pod image-puller-${BUILD_NUMBER} -n ${K8S_NAMESPACE} -o jsonpath="{.status.phase}" 2>/dev/null || echo "Pending")
+                            if [ "$PHASE" = "Running" ]; then
+                                echo "✅ Image successfully pulled!"
+                                break
+                            elif [ "$PHASE" = "Failed" ] || [ "$PHASE" = "Error" ]; then
+                                echo "❌ Failed to pull image"
+                                kubectl describe pod image-puller-${BUILD_NUMBER} -n ${K8S_NAMESPACE}
+                                exit 1
+                            fi
+                            echo "Pod status: $PHASE, waiting..."
+                            sleep 5
+                        done
+                    ' || echo "⚠️ Timeout waiting for image pull, continuing anyway..."
+
+                    echo "=== Cleaning up pre-pull pod ==="
+                    kubectl delete pod image-puller-${BUILD_NUMBER} --namespace=${K8S_NAMESPACE} --ignore-not-found=true
+
+                    rm -f /tmp/pre-pull.yaml
                 """
             }
         }
@@ -227,18 +261,10 @@ EOF
             }
         }
 
-        stage('Deploy Spring Boot Application - DockerHub Pull') {
+        stage('Deploy Spring Boot Application') {
             steps {
-                echo "🚀 Déploiement de l'application Spring Boot (pulling from DockerHub)..."
+                echo "🚀 Déploiement de l'application Spring Boot..."
                 script {
-                    // First, let's debug the network in Minikube
-                    sh """
-                        echo "=== Debugging Minikube network ==="
-                        echo "Minikube IP: \$(minikube ip)"
-                        echo "Testing connection to DockerHub from Minikube..."
-                        minikube ssh "curl -s -o /dev/null -w '%{http_code}' https://hub.docker.com || echo 'Curl failed'"
-                    """
-
                     String yamlContent = """apiVersion: v1
 kind: Service
 metadata:
@@ -268,13 +294,12 @@ spec:
       labels:
         app: spring-app
     spec:
-      # Add node selector to ensure pod runs on minikube node
-      nodeSelector:
-        kubernetes.io/hostname: minikube
+      # Add this to force image pull and handle slow network
+      imagePullSecrets: []
       containers:
       - name: spring-app
         image: ${IMAGE_NAME}:${IMAGE_TAG}
-        imagePullPolicy: IfNotPresent  # Use local if exists, otherwise pull
+        imagePullPolicy: IfNotPresent  # Will pull if not present locally
         ports:
         - containerPort: 8080
         env:
@@ -299,30 +324,25 @@ spec:
           limits:
             memory: "1Gi"
             cpu: "500m"
-        # Add proper probes
-        livenessProbe:
+        # Add proper probes with longer timeouts
+        startupProbe:
           httpGet:
             path: ${CONTEXT_PATH}/actuator/health
             port: 8080
-          initialDelaySeconds: 180
-          periodSeconds: 30
-          timeoutSeconds: 5
-          failureThreshold: 3
+          failureThreshold: 60  # 60 * 10 = 600 seconds = 10 minutes
+          periodSeconds: 10
         readinessProbe:
           httpGet:
             path: ${CONTEXT_PATH}/actuator/health
             port: 8080
           initialDelaySeconds: 120
           periodSeconds: 20
-          timeoutSeconds: 5
-          failureThreshold: 3
-        # Add security context to avoid permission issues
-        securityContext:
-          runAsUser: 1000
-          runAsGroup: 1000
-          allowPrivilegeEscalation: false
-      # Add termination grace period for slow shutdown
-      terminationGracePeriodSeconds: 300
+        livenessProbe:
+          httpGet:
+            path: ${CONTEXT_PATH}/actuator/health
+            port: 8080
+          initialDelaySeconds: 180
+          periodSeconds: 30
 """
 
                     writeFile file: 'spring-deployment.yaml', text: yamlContent
@@ -332,9 +352,9 @@ spec:
                     echo "=== Application du déploiement ==="
                     kubectl apply -f spring-deployment.yaml
 
-                    echo "=== Monitoring pod creation (5 minutes max) ==="
-                    for i in \$(seq 1 30); do
-                        echo "Minute \$i/30..."
+                    echo "=== Monitoring pod creation (10 minutes max) ==="
+                    for i in \$(seq 1 60); do
+                        echo "Minute \$i/60..."
                         POD_NAME=\$(kubectl get pods -n ${K8S_NAMESPACE} -l app=spring-app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
                         if [ -n "\$POD_NAME" ]; then
                             POD_STATUS=\$(kubectl get pod \$POD_NAME -n ${K8S_NAMESPACE} -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
@@ -343,14 +363,10 @@ spec:
                             if [ "\$POD_STATUS" = "Running" ]; then
                                 echo "✅ Pod en cours d'exécution!"
                                 break
-                            elif [ "\$POD_STATUS" = "Pending" ]; then
-                                # Check why it's pending
-                                echo "=== Détails du pod (Pending) ==="
-                                kubectl describe pod \$POD_NAME -n ${K8S_NAMESPACE}
-                            elif [ "\$POD_STATUS" = "Failed" ]; then
+                            elif [ "\$POD_STATUS" = "Failed" ] || [ "\$POD_STATUS" = "Error" ]; then
                                 echo "❌ Pod a échoué"
                                 kubectl describe pod \$POD_NAME -n ${K8S_NAMESPACE}
-                                kubectl logs \$POD_NAME -n ${K8S_NAMESPACE}
+                                kubectl logs \$POD_NAME -n ${K8S_NAMESPACE} --tail=50 || true
                                 exit 1
                             fi
                         fi
@@ -359,9 +375,6 @@ spec:
 
                     echo "=== Vérification finale de l'état ==="
                     kubectl get pods,svc -n ${K8S_NAMESPACE}
-
-                    echo "=== Événements récents ==="
-                    kubectl get events -n ${K8S_NAMESPACE} --sort-by='.lastTimestamp' | tail -10
                 """
             }
         }
@@ -383,10 +396,6 @@ spec:
                         echo "Pod: \$POD_NAME"
                         echo "=== Derniers logs (50 lignes) ==="
                         kubectl logs -n ${K8S_NAMESPACE} \$POD_NAME --tail=50
-
-                        echo ""
-                        echo "=== État du pod ==="
-                        kubectl describe pod \$POD_NAME -n ${K8S_NAMESPACE}
                     fi
 
                     echo ""
@@ -399,8 +408,7 @@ spec:
                         if curl -s -f -m 20 "http://\${MINIKUBE_IP}:30080${CONTEXT_PATH}/actuator/health"; then
                             echo "✅ Application accessible avec contexte path!"
                             echo "=== Test de l'API Foyer ==="
-                            curl -s "http://\${MINIKUBE_IP}:30080${CONTEXT_PATH}/foyer/getAllFoyers" | head -20
-                            echo "... (tronqué)"
+                            curl -s "http://\${MINIKUBE_IP}:30080${CONTEXT_PATH}/foyer/getAllFoyers"
                             break
                         elif curl -s -f -m 20 "http://\${MINIKUBE_IP}:30080/actuator/health"; then
                             echo "✅ Application accessible (sans contexte path)"
@@ -426,7 +434,7 @@ spec:
             // Nettoyage
             sh '''
                 echo "=== Nettoyage des fichiers temporaires ==="
-                rm -f spring-deployment.yaml /tmp/mysql-deployment.yaml /tmp/mysql-storage.yaml 2>/dev/null || true
+                rm -f spring-deployment.yaml /tmp/mysql-deployment.yaml /tmp/mysql-storage.yaml /tmp/pre-pull.yaml 2>/dev/null || true
             '''
 
             // Rapport final
@@ -447,10 +455,6 @@ spec:
                     echo "1. Test MySQL: kubectl exec -n devops -it \$(kubectl get pods -n devops -l app=mysql -o name | head -1) -- mysql -u root -proot123"
                     echo "2. Test Spring Boot: curl -s http://\${MINIKUBE_IP}:30080${CONTEXT_PATH}/actuator/health"
                     echo "3. Test API: curl -s http://\${MINIKUBE_IP}:30080${CONTEXT_PATH}/foyer/getAllFoyers"
-                    echo ""
-                    echo "=== Debug commands ==="
-                    echo "4. Check image in Minikube: minikube ssh 'docker images | grep ${IMAGE_NAME}'"
-                    echo "5. Check pod details: kubectl describe pods -n devops -l app=spring-app"
                 """
             }
         }
@@ -468,12 +472,6 @@ spec:
                     echo ""
                     echo "3. Événements du namespace:"
                     kubectl get events -n ${K8S_NAMESPACE} --sort-by='.lastTimestamp' | tail -30 || true
-                    echo ""
-                    echo "4. Check image pull status in Minikube:"
-                    minikube ssh "docker images | grep ${IMAGE_NAME}" || true
-                    echo ""
-                    echo "5. Network test from Minikube to DockerHub:"
-                    minikube ssh "curl -I -m 10 https://hub.docker.com" || echo "Network test failed"
                 """
             }
         }
