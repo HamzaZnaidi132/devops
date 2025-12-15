@@ -45,7 +45,7 @@ pipeline {
                 echo "🔨 Building application..."
                 sh '''
                     echo "=== Clean Maven build ==="
-                    mvn clean package -DskipTests -B -q -T 1C
+                    mvn clean package -DskipTests -B
 
                     echo "=== Verify JAR ==="
                     JAR_FILE=$(find target -name "*.jar" -type f | head -1)
