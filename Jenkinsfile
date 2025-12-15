@@ -8,10 +8,6 @@ pipeline {
         CONTEXT_PATH = "/tp-foyer"
         DOCKERHUB_CREDENTIALS = credentials('docker-hub')
     }
-    triggers{
-        githubPush()
-    }
-
 
     stages {
         stage('Checkout') {
@@ -66,6 +62,19 @@ pipeline {
 
                     echo "=== Logout from DockerHub ==="
                     docker logout
+                """
+            }
+        }
+
+        stage('Pre-pull Image in Minikube') {
+            steps {
+                echo "📥 Pre-pulling image in Minikube..."
+                sh """
+                    echo "=== Pulling image in Minikube to warm cache ==="
+                    minikube ssh "docker pull ${IMAGE_NAME}:${IMAGE_TAG}"
+
+                    echo "=== Verifying image in Minikube ==="
+                    minikube ssh "docker images | grep ${IMAGE_NAME}"
                 """
             }
         }
@@ -218,10 +227,18 @@ EOF
             }
         }
 
-        stage('Deploy Spring Boot Application - Optimized') {
+        stage('Deploy Spring Boot Application - DockerHub Pull') {
             steps {
-                echo "🚀 Déploiement de l'application Spring Boot (optimisé)..."
+                echo "🚀 Déploiement de l'application Spring Boot (pulling from DockerHub)..."
                 script {
+                    // First, let's debug the network in Minikube
+                    sh """
+                        echo "=== Debugging Minikube network ==="
+                        echo "Minikube IP: \$(minikube ip)"
+                        echo "Testing connection to DockerHub from Minikube..."
+                        minikube ssh "curl -s -o /dev/null -w '%{http_code}' https://hub.docker.com || echo 'Curl failed'"
+                    """
+
                     String yamlContent = """apiVersion: v1
 kind: Service
 metadata:
@@ -251,10 +268,13 @@ spec:
       labels:
         app: spring-app
     spec:
+      # Add node selector to ensure pod runs on minikube node
+      nodeSelector:
+        kubernetes.io/hostname: minikube
       containers:
       - name: spring-app
         image: ${IMAGE_NAME}:${IMAGE_TAG}
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent  # Use local if exists, otherwise pull
         ports:
         - containerPort: 8080
         env:
@@ -279,25 +299,30 @@ spec:
           limits:
             memory: "1Gi"
             cpu: "500m"
-        # Add proper probes with longer timeouts for slow startup
-        startupProbe:
-          httpGet:
-            path: ${CONTEXT_PATH}/actuator/health
-            port: 8080
-          failureThreshold: 30
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: ${CONTEXT_PATH}/actuator/health
-            port: 8080
-          initialDelaySeconds: 60
-          periodSeconds: 15
+        # Add proper probes
         livenessProbe:
           httpGet:
             path: ${CONTEXT_PATH}/actuator/health
             port: 8080
           initialDelaySeconds: 180
           periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: ${CONTEXT_PATH}/actuator/health
+            port: 8080
+          initialDelaySeconds: 120
+          periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 3
+        # Add security context to avoid permission issues
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          allowPrivilegeEscalation: false
+      # Add termination grace period for slow shutdown
+      terminationGracePeriodSeconds: 300
 """
 
                     writeFile file: 'spring-deployment.yaml', text: yamlContent
@@ -307,23 +332,36 @@ spec:
                     echo "=== Application du déploiement ==="
                     kubectl apply -f spring-deployment.yaml
 
-                    echo "=== Vérification de l'état initial ==="
-                    kubectl get pods,svc -n ${K8S_NAMESPACE}
+                    echo "=== Monitoring pod creation (5 minutes max) ==="
+                    for i in \$(seq 1 30); do
+                        echo "Minute \$i/30..."
+                        POD_NAME=\$(kubectl get pods -n ${K8S_NAMESPACE} -l app=spring-app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+                        if [ -n "\$POD_NAME" ]; then
+                            POD_STATUS=\$(kubectl get pod \$POD_NAME -n ${K8S_NAMESPACE} -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+                            echo "Pod: \$POD_NAME, Status: \$POD_STATUS"
 
-                    echo "=== Attente patiente du démarrage (4 minutes) ==="
-                    for i in \$(seq 1 24); do
-                        echo "Minute \$i/4..."
-                        POD_STATUS=\$(kubectl get pod -n ${K8S_NAMESPACE} -l app=spring-app -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Unknown")
-                        echo "État du pod: \${POD_STATUS}"
-                        if [ "\${POD_STATUS}" = "Running" ]; then
-                            echo "✅ Pod en cours d'exécution!"
-                            break
+                            if [ "\$POD_STATUS" = "Running" ]; then
+                                echo "✅ Pod en cours d'exécution!"
+                                break
+                            elif [ "\$POD_STATUS" = "Pending" ]; then
+                                # Check why it's pending
+                                echo "=== Détails du pod (Pending) ==="
+                                kubectl describe pod \$POD_NAME -n ${K8S_NAMESPACE}
+                            elif [ "\$POD_STATUS" = "Failed" ]; then
+                                echo "❌ Pod a échoué"
+                                kubectl describe pod \$POD_NAME -n ${K8S_NAMESPACE}
+                                kubectl logs \$POD_NAME -n ${K8S_NAMESPACE}
+                                exit 1
+                            fi
                         fi
                         sleep 10
                     done
 
-                    echo "=== Détails du pod ==="
-                    kubectl describe pods -n ${K8S_NAMESPACE} -l app=spring-app
+                    echo "=== Vérification finale de l'état ==="
+                    kubectl get pods,svc -n ${K8S_NAMESPACE}
+
+                    echo "=== Événements récents ==="
+                    kubectl get events -n ${K8S_NAMESPACE} --sort-by='.lastTimestamp' | tail -10
                 """
             }
         }
@@ -332,6 +370,9 @@ spec:
             steps {
                 echo "✅ Vérification du déploiement..."
                 sh """
+                    echo "=== Attente supplémentaire pour l'application ==="
+                    sleep 60
+
                     echo "=== Vérification finale des pods ==="
                     kubectl get pods -n ${K8S_NAMESPACE} -o wide
 
@@ -349,24 +390,24 @@ spec:
                     fi
 
                     echo ""
-                    echo "=== Test de l'application (attente supplémentaire) ==="
+                    echo "=== Test de l'application ==="
                     MINIKUBE_IP=\$(minikube ip)
-                    sleep 60  # Additional wait
 
                     echo "Tentative de connexion..."
-                    for i in \$(seq 1 20); do
-                        echo "Tentative \$i/20..."
-                        if curl -s -f -m 15 "http://\${MINIKUBE_IP}:30080${CONTEXT_PATH}/actuator/health"; then
+                    for i in \$(seq 1 15); do
+                        echo "Tentative \$i/15..."
+                        if curl -s -f -m 20 "http://\${MINIKUBE_IP}:30080${CONTEXT_PATH}/actuator/health"; then
                             echo "✅ Application accessible avec contexte path!"
                             echo "=== Test de l'API Foyer ==="
-                            curl -s "http://\${MINIKUBE_IP}:30080${CONTEXT_PATH}/foyer/getAllFoyers"
+                            curl -s "http://\${MINIKUBE_IP}:30080${CONTEXT_PATH}/foyer/getAllFoyers" | head -20
+                            echo "... (tronqué)"
                             break
-                        elif curl -s -f -m 15 "http://\${MINIKUBE_IP}:30080/actuator/health"; then
+                        elif curl -s -f -m 20 "http://\${MINIKUBE_IP}:30080/actuator/health"; then
                             echo "✅ Application accessible (sans contexte path)"
                             break
                         else
-                            echo "⏱️  En attente... (\$i/20)"
-                            sleep 15
+                            echo "⏱️  En attente... (\$i/15)"
+                            sleep 20
                         fi
                     done
 
@@ -406,6 +447,10 @@ spec:
                     echo "1. Test MySQL: kubectl exec -n devops -it \$(kubectl get pods -n devops -l app=mysql -o name | head -1) -- mysql -u root -proot123"
                     echo "2. Test Spring Boot: curl -s http://\${MINIKUBE_IP}:30080${CONTEXT_PATH}/actuator/health"
                     echo "3. Test API: curl -s http://\${MINIKUBE_IP}:30080${CONTEXT_PATH}/foyer/getAllFoyers"
+                    echo ""
+                    echo "=== Debug commands ==="
+                    echo "4. Check image in Minikube: minikube ssh 'docker images | grep ${IMAGE_NAME}'"
+                    echo "5. Check pod details: kubectl describe pods -n devops -l app=spring-app"
                 """
             }
         }
@@ -415,24 +460,20 @@ spec:
             script {
                 sh """
                     echo "=== DEBUG INFO ==="
-                    echo "1. Pods MySQL:"
-                    kubectl get pods -n ${K8S_NAMESPACE} -l app=mysql -o wide || true
-                    echo ""
-                    echo "2. Logs MySQL:"
-                    kubectl logs -n ${K8S_NAMESPACE} -l app=mysql --tail=100 || true
-                    echo ""
-                    echo "3. Pods Spring Boot:"
+                    echo "1. Pods Spring Boot:"
                     kubectl get pods -n ${K8S_NAMESPACE} -l app=spring-app -o wide || true
                     echo ""
-                    echo "4. Détails des pods Spring Boot:"
+                    echo "2. Détails des pods Spring Boot:"
                     kubectl describe pods -n ${K8S_NAMESPACE} -l app=spring-app || true
                     echo ""
-                    echo "5. Événements du namespace:"
+                    echo "3. Événements du namespace:"
                     kubectl get events -n ${K8S_NAMESPACE} --sort-by='.lastTimestamp' | tail -30 || true
                     echo ""
-                    echo "6. Vérification des images:"
-                    echo "Image utilisée: ${IMAGE_NAME}:${IMAGE_TAG}"
-                    echo "Vérification sur DockerHub: https://hub.docker.com/r/${IMAGE_NAME}"
+                    echo "4. Check image pull status in Minikube:"
+                    minikube ssh "docker images | grep ${IMAGE_NAME}" || true
+                    echo ""
+                    echo "5. Network test from Minikube to DockerHub:"
+                    minikube ssh "curl -I -m 10 https://hub.docker.com" || echo "Network test failed"
                 """
             }
         }
