@@ -17,71 +17,27 @@ pipeline {
         githubPush()
     }
 
-
     stages {
         stage('Prepare Environment') {
             steps {
                 echo "⚙️  Préparation de l'environnement..."
                 script {
+                    // First, check and wait for namespace to be deleted if it exists
                     sh '''
-                        echo "=== Vérification et nettoyage du namespace ==="
-
-                        # Check if namespace exists
+                        echo "=== Vérification de l'état du namespace ==="
                         if kubectl get namespace ${K8S_NAMESPACE} &>/dev/null; then
-                            echo "Le namespace ${K8S_NAMESPACE} existe. Vérification de son état..."
+                            echo "Le namespace ${K8S_NAMESPACE} existe. Suppression..."
+                            kubectl delete namespace ${K8S_NAMESPACE} --ignore-not-found=true --wait=false
 
-                            # Get namespace status
-                            NS_STATUS=$(kubectl get namespace ${K8S_NAMESPACE} -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
-
-                            if [ "$NS_STATUS" = "Terminating" ]; then
-                                echo "⚠️  Namespace ${K8S_NAMESPACE} est en cours de termination..."
-
-                                # Force remove finalizers if stuck
-                                kubectl get namespace ${K8S_NAMESPACE} -o json | \
-                                jq 'del(.spec.finalizers[])' | \
-                                kubectl replace --raw "/api/v1/namespaces/${K8S_NAMESPACE}/finalize" -f - 2>/dev/null || true
-
-                                # Wait for complete deletion
-                                echo "Attente de la suppression complète du namespace (max 60s)..."
-                                COUNTER=0
-                                while kubectl get namespace ${K8S_NAMESPACE} &>/dev/null && [ $COUNTER -lt 12 ]; do
-                                    echo "⏱️  En attente... ($((COUNTER*5))s/60s)"
-                                    sleep 5
-                                    COUNTER=$((COUNTER + 1))
-                                done
-
-                                if kubectl get namespace ${K8S_NAMESPACE} &>/dev/null; then
-                                    echo "❌ Impossible de supprimer le namespace. Utilisation du mode force..."
-                                    # Force delete using kubectl proxy method
-                                    cat > /tmp/force-delete-ns.json <<EOF
-{
-  "kind": "DeleteOptions",
-  "apiVersion": "v1",
-  "propagationPolicy": "Background"
-}
-EOF
-                                    kubectl proxy --port=8080 &
-                                    PROXY_PID=$!
-                                    sleep 2
-                                    curl -X DELETE http://localhost:8080/api/v1/namespaces/${K8S_NAMESPACE} \
-                                         -H "Content-Type: application/json" \
-                                         -d @/tmp/force-delete-ns.json
-                                    kill $PROXY_PID 2>/dev/null || true
-                                    sleep 10
-                                fi
-                            else
-                                echo "Suppression normale du namespace..."
-                                kubectl delete namespace ${K8S_NAMESPACE} --wait=false
-                            fi
-
-                            # Final check and wait
-                            echo "Attente finale de suppression..."
+                            # Wait for namespace to be completely deleted
+                            echo "Attente de la suppression complète du namespace..."
                             for i in {1..30}; do
                                 if ! kubectl get namespace ${K8S_NAMESPACE} &>/dev/null; then
-                                    echo "✅ Namespace ${K8S_NAMESPACE} complètement supprimé"
+                                    echo "✅ Namespace ${K8S_NAMESPACE} supprimé"
                                     break
                                 fi
-                                sleep 2
+                                echo "⏱️  En attente de suppression... (${i}/30)"
+                                sleep 5
                             done
                         else
                             echo "✅ Namespace ${K8S_NAMESPACE} n'existe pas"
@@ -89,28 +45,10 @@ EOF
 
                         # Create namespace
                         echo "=== Création du namespace ==="
-                        kubectl create namespace ${K8S_NAMESPACE} || {
-                            echo "⚠️  Échec de création, vérification de l'état..."
-                            sleep 5
-                            # Try again
-                            kubectl create namespace ${K8S_NAMESPACE} || true
-                        }
+                        kubectl create namespace ${K8S_NAMESPACE} || echo "Namespace déjà créé"
 
-                        # Verify namespace is ready
-                        echo "Vérification que le namespace est actif..."
-                        for i in {1..10}; do
-                            if kubectl get namespace ${K8S_NAMESPACE} &>/dev/null; then
-                                NS_READY=$(kubectl get namespace ${K8S_NAMESPACE} -o jsonpath='{.status.phase}')
-                                if [ "$NS_READY" = "Active" ]; then
-                                    echo "✅ Namespace ${K8S_NAMESPACE} est actif"
-                                    break
-                                fi
-                            fi
-                            sleep 2
-                        done
-
-                        # Set namespace as default for current context
-                        kubectl config set-context --current --namespace=${K8S_NAMESPACE}
+                        # Wait a bit for namespace to be ready
+                        sleep 5
                     '''
                 }
             }
@@ -123,23 +61,36 @@ EOF
             }
         }
 
-       stage('SonarQube Quick Analysis') {
-           steps {
-               echo "🔍 Quick SonarQube Analysis..."
-               script {
-                   // Run SonarQube analysis WITHOUT waiting
-                   sh '''
-                       mvn clean compile sonar:sonar \
-                           -Dsonar.projectKey=foyer-project \
-                           -Dsonar.host.url=http://172.30.40.173:9000 \
-                           -Dsonar.login=${SONAR_TOKEN} \
-                           -Dsonar.qualitygate.wait=false \
-                           -DskipTests
-                       echo "✅ Analysis submitted to SonarQube"
-                   '''
-               }
-           }
-       }
+        stage('SonarQube Quality Gate') {
+            steps {
+                echo "🔍 Analyse de la qualité du code avec SonarQube..."
+                script {
+                    withSonarQubeEnv('SonarQube') {
+                        sh '''
+                            echo "=== Démarrage de l'analyse SonarQube ==="
+                            mvn clean verify sonar:sonar \
+                                -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                                -Dsonar.projectName="Foyer Project" \
+                                -Dsonar.sources=src/main/java \
+                                -Dsonar.tests=src/test/java \
+                                -Dsonar.java.binaries=target/classes \
+                                -Dsonar.java.libraries=target/**/*.jar \
+                                -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
+                                -Dsonar.sourceEncoding=UTF-8 \
+                                -Dsonar.host.url=${SONAR_HOST_URL} \
+                                -DskipTests=true
+
+                            echo "=== Attente du traitement SonarQube ==="
+                            sleep 30
+                        '''
+                    }
+
+                    timeout(time: 10, unit: 'MINUTES') {
+                        waitForQualityGate abortPipeline: true
+                    }
+                }
+            }
+        }
 
         stage('Build & Test') {
             steps {
@@ -215,29 +166,8 @@ EOF
             steps {
                 echo "🗄️  Déploiement de MySQL..."
                 sh """
-                    echo "=== Vérification du namespace ==="
-                    kubectl get namespace ${K8S_NAMESPACE} || {
-                        echo "Création du namespace..."
-                        kubectl create namespace ${K8S_NAMESPACE}
-                    }
-
                     echo "=== Creating MySQL deployment ==="
                     cat > /tmp/mysql.yaml << 'EOF'
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: mysql-pv
-  namespace: ${K8S_NAMESPACE}
-spec:
-  capacity:
-    storage: 2Gi
-  accessModes:
-    - ReadWriteOnce
-  hostPath:
-    path: "/data/mysql"
-    type: DirectoryOrCreate
-  storageClassName: standard
----
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -307,29 +237,30 @@ spec:
   type: ClusterIP
 EOF
 
-                    # Create directory for PV
-                    sudo mkdir -p /data/mysql
-                    sudo chmod 777 /data/mysql
-
                     kubectl apply -f /tmp/mysql.yaml
 
-                    echo "=== Waiting for MySQL to start ==="
-                    for i in {1..30}; do
-                        echo "⏱️  Waiting... (\${i}/30)"
+                    echo "=== Waiting for MySQL to start (120 seconds) ==="
+                    for i in {1..24}; do
+                        echo "⏱️  Waiting... (\${i}/24)"
                         sleep 5
+                    done
 
-                        # Check if pod is running
+                    echo "=== Checking MySQL status ==="
+                    kubectl get pods,svc -n ${K8S_NAMESPACE}
+
+                    echo "=== Configuring MySQL permissions ==="
+                    for i in {1..20}; do
                         POD_NAME=\$(kubectl get pods -n ${K8S_NAMESPACE} -l app=mysql -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
                         if [ -n "\$POD_NAME" ]; then
+                            echo "Attempt \${i}/20: Checking pod \$POD_NAME..."
                             POD_STATUS=\$(kubectl get pod -n ${K8S_NAMESPACE} \$POD_NAME -o jsonpath='{.status.phase}' 2>/dev/null)
                             if [ "\$POD_STATUS" = "Running" ]; then
-                                echo "✅ MySQL pod is running"
+                                echo "✅ MySQL is running. Configuring permissions..."
 
-                                # Wait extra time for MySQL to be ready
+                                # Wait a bit more for MySQL to be fully ready
                                 sleep 20
 
                                 # Configure MySQL permissions
-                                echo "=== Configuring MySQL permissions ==="
                                 kubectl exec -n ${K8S_NAMESPACE} \$POD_NAME -- mysql -u root -proot123 -e "
                                     CREATE USER IF NOT EXISTS 'spring'@'%' IDENTIFIED BY 'spring123';
                                     GRANT ALL PRIVILEGES ON springdb.* TO 'spring'@'%';
@@ -338,13 +269,20 @@ EOF
                                     CREATE DATABASE IF NOT EXISTS springdb;
                                     USE springdb;
                                     SELECT '✅ Database created and configured' as Status;
-                                " 2>/dev/null && break
+                                " 2>/dev/null && break || echo "⚠️  Retrying in 10 seconds..."
                             fi
                         fi
+                        sleep 10
                     done
 
                     echo "=== Final MySQL verification ==="
-                    kubectl get pods,svc,pvc,pv -n ${K8S_NAMESPACE}
+                    kubectl get pods,svc -n ${K8S_NAMESPACE}
+
+                    echo "=== Testing MySQL connection ==="
+                    MYSQL_POD=\$(kubectl get pods -n ${K8S_NAMESPACE} -l app=mysql -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+                    if [ -n "\$MYSQL_POD" ]; then
+                        kubectl exec -n ${K8S_NAMESPACE} \$MYSQL_POD -- mysql -u root -proot123 -e "SHOW DATABASES; SELECT 'MySQL operational' as Status;"
+                    fi
                 """
             }
         }
@@ -359,7 +297,7 @@ metadata:
   name: spring-app
   namespace: ${K8S_NAMESPACE}
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: spring-app
@@ -371,16 +309,16 @@ spec:
       containers:
       - name: spring-app
         image: ${IMAGE_NAME}:${IMAGE_TAG}
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Never
         ports:
         - containerPort: 8080
         env:
         - name: SPRING_DATASOURCE_URL
           value: "jdbc:mysql://mysql-service:3306/springdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&createDatabaseIfNotExist=true"
         - name: SPRING_DATASOURCE_USERNAME
-          value: "spring"
+          value: "root"
         - name: SPRING_DATASOURCE_PASSWORD
-          value: "spring123"
+          value: "root123"
         - name: SPRING_DATASOURCE_DRIVER_CLASS_NAME
           value: "com.mysql.cj.jdbc.Driver"
         - name: SPRING_JPA_HIBERNATE_DDL_AUTO
@@ -431,6 +369,7 @@ spec:
       nodePort: 30080
   type: NodePort
 """
+
                     writeFile file: 'spring-deployment.yaml', text: yamlContent
                 }
 
@@ -438,21 +377,51 @@ spec:
                     echo "=== Applying Spring Boot deployment ==="
                     kubectl apply -f spring-deployment.yaml
 
-                    echo "=== Waiting for Spring Boot to start ==="
-                    for i in {1..30}; do
-                        echo "⏱️  Waiting for Spring Boot... (\${i}/30)"
-
-                        # Check deployment status
-                        DEPLOYMENT_READY=\$(kubectl get deployment -n ${K8S_NAMESPACE} spring-app -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
-                        if [ "\$DEPLOYMENT_READY" = "2" ]; then
-                            echo "✅ Spring Boot deployment ready"
-                            break
-                        fi
+                    echo "=== Waiting for Spring Boot to start (4 minutes) ==="
+                    for i in {1..24}; do
+                        echo "⏱️  Waiting for Spring Boot... (\${i}/24)"
                         sleep 10
                     done
 
                     echo "=== Checking deployment status ==="
-                    kubectl get pods,svc,deployment -n ${K8S_NAMESPACE}
+                    kubectl get pods,svc -n ${K8S_NAMESPACE}
+                """
+            }
+        }
+        stage('Diagnose Issues') {
+            steps {
+                echo "🩺 Diagnostic des problèmes..."
+                sh """
+                    echo "=== Diagnostic complet ==="
+
+                    # Vérifier l'état des ressources
+                    echo "1. État des ressources cluster:"
+                    kubectl get all -n ${K8S_NAMESPACE} 2>/dev/null || echo "Cluster inaccessible"
+
+                    echo ""
+                    echo "2. Détails du pod Spring Boot:"
+                    POD_NAME=\$(kubectl get pods -n ${K8S_NAMESPACE} -l app=spring-app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+                    if [ -n "\$POD_NAME" ]; then
+                        kubectl describe pod -n ${K8S_NAMESPACE} \$POD_NAME
+                    fi
+
+                    echo ""
+                    echo "3. Logs complets Spring Boot:"
+                    if [ -n "\$POD_NAME" ]; then
+                        kubectl logs -n ${K8S_NAMESPACE} \$POD_NAME
+                    fi
+
+                    echo ""
+                    echo "4. Test de connexion à MySQL depuis l'intérieur du pod:"
+                    if [ -n "\$POD_NAME" ]; then
+                        kubectl exec -n ${K8S_NAMESPACE} \$POD_NAME -- sh -c "
+                            echo 'Test de connexion réseau à MySQL...'
+                            nc -z -v mysql-service 3306
+                            echo ''
+                            echo 'Test de résolution DNS...'
+                            nslookup mysql-service || cat /etc/resolv.conf
+                        " 2>/dev/null || echo "Impossible d'exécuter les tests"
+                    fi
                 """
             }
         }
@@ -472,7 +441,7 @@ spec:
                     POD_NAME=\$(kubectl get pods -n ${K8S_NAMESPACE} -l app=spring-app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
                     if [ -n "\$POD_NAME" ]; then
                         echo "Pod: \$POD_NAME"
-                        kubectl logs -n ${K8S_NAMESPACE} \$POD_NAME --tail=200 | grep -E "(ERROR|WARN|INFO.*Application|Started|JPA|Tomcat|MySQL)" | head -50
+                        kubectl logs -n ${K8S_NAMESPACE} \$POD_NAME --tail=200 | grep -E "(ERROR|WARN|INFO.*Application|Started|JPA)" | head -50
                     else
                         echo "No Spring Boot pod found"
                     fi
@@ -485,39 +454,23 @@ spec:
                 echo "✅ Test de santé de l'application..."
                 sh """
                     echo "=== Testing health endpoint ==="
-                    MAX_ATTEMPTS=15
-                    SUCCESS=0
-
-                    for i in \$(seq 1 \$MAX_ATTEMPTS); do
-                        echo "Attempt \${i}/\$MAX_ATTEMPTS..."
-
-                        # Try with context path
+                    for i in {1..10}; do
+                        echo "Attempt \${i}/10..."
                         if curl -s -f -m 30 "http://${MINIKUBE_IP}:30080${CONTEXT_PATH}/actuator/health" > /dev/null; then
                             echo "✅ Application accessible with context path!"
                             echo ""
                             echo "=== Testing Foyer API ==="
                             curl -s "http://${MINIKUBE_IP}:30080${CONTEXT_PATH}/foyer/getAllFoyers" | head -20
                             echo ""
-                            SUCCESS=1
                             break
-                        # Try without context path
                         elif curl -s -f -m 30 "http://${MINIKUBE_IP}:30080/actuator/health" > /dev/null; then
                             echo "✅ Application accessible (without context path)"
-                            SUCCESS=1
                             break
                         else
-                            echo "⏱️  Waiting... (\${i}/\$MAX_ATTEMPTS)"
-                            sleep 10
+                            echo "⏱️  Waiting... (\${i}/10)"
+                            sleep 15
                         fi
                     done
-
-                    if [ \$SUCCESS -eq 0 ]; then
-                        echo "⚠️  Application not accessible, checking logs..."
-                        POD_NAME=\$(kubectl get pods -n ${K8S_NAMESPACE} -l app=spring-app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-                        if [ -n "\$POD_NAME" ]; then
-                            kubectl logs -n ${K8S_NAMESPACE} \$POD_NAME --tail=50
-                        fi
-                    fi
 
                     echo ""
                     echo "=== Final resource status ==="
@@ -534,29 +487,33 @@ spec:
             // Cleanup
             sh '''
                 echo "=== Cleaning temporary files ==="
-                rm -f Dockerfile.jenkins spring-deployment.yaml /tmp/mysql.yaml /tmp/force-delete-ns.json 2>/dev/null || true
+                rm -f Dockerfile.jenkins spring-deployment.yaml /tmp/mysql.yaml 2>/dev/null || true
             '''
 
             // Final report
             sh """
                 echo ""
                 echo "=== FINAL REPORT ==="
+                echo "✅ Pipeline executed"
                 echo "📊 Docker Image: ${IMAGE_NAME}:${IMAGE_TAG}"
                 echo "📁 Namespace: ${K8S_NAMESPACE}"
                 echo "🌐 Context path: ${CONTEXT_PATH}"
                 echo ""
                 echo "=== IMPORTANT LINKS ==="
                 echo "📈 SonarQube Dashboard: ${SONAR_HOST_URL}/dashboard?id=${SONAR_PROJECT_KEY}"
+                echo "🔍 SonarQube Project: ${SONAR_HOST_URL}/project/overview?id=${SONAR_PROJECT_KEY}"
                 echo ""
                 echo "=== APPLICATION ACCESS ==="
                 echo "🌐 Spring Boot Application: http://${MINIKUBE_IP}:30080${CONTEXT_PATH}"
                 echo "🔧 Health Check: http://${MINIKUBE_IP}:30080${CONTEXT_PATH}/actuator/health"
+                echo "📊 Foyer API: http://${MINIKUBE_IP}:30080${CONTEXT_PATH}/foyer/getAllFoyers"
                 echo ""
                 echo "=== TROUBLESHOOTING COMMANDS ==="
                 echo "1. View all pods: kubectl get pods -n ${K8S_NAMESPACE}"
                 echo "2. View Spring Boot logs: kubectl logs -n ${K8S_NAMESPACE} -l app=spring-app --tail=100"
                 echo "3. View MySQL logs: kubectl logs -n ${K8S_NAMESPACE} -l app=mysql --tail=50"
                 echo "4. Restart Spring Boot: kubectl rollout restart deployment/spring-app -n ${K8S_NAMESPACE}"
+                echo "5. MySQL access: kubectl exec -n ${K8S_NAMESPACE} -it \$(kubectl get pods -n ${K8S_NAMESPACE} -l app=mysql -o name | head -1) -- mysql -u root -proot123"
             """
         }
 
@@ -583,20 +540,20 @@ spec:
                 kubectl get pods -n ${K8S_NAMESPACE} 2>/dev/null || echo "Unable to get pods"
 
                 echo ""
-                echo "2. Pod events:"
-                kubectl describe pods -n ${K8S_NAMESPACE} -l app=spring-app 2>/dev/null | grep -A20 Events: || echo "Unable to get events"
+                echo "2. Recent events:"
+                kubectl get events -n ${K8S_NAMESPACE} --sort-by='.lastTimestamp' 2>/dev/null | tail -20 || echo "Unable to get events"
 
                 echo ""
                 echo "3. Services:"
                 kubectl get svc -n ${K8S_NAMESPACE} 2>/dev/null || echo "Unable to get services"
 
                 echo ""
-                echo "4. Database connection test:"
-                MYSQL_POD=\$(kubectl get pods -n ${K8S_NAMESPACE} -l app=mysql -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-                if [ -n "\$MYSQL_POD" ]; then
-                    kubectl exec -n ${K8S_NAMESPACE} \$MYSQL_POD -- mysql -u root -proot123 -e "SHOW DATABASES; SELECT USER(), CURRENT_USER();"
-                fi
+                echo "4. Manual tests:"
+                echo "   Test MySQL: mysql -h ${MINIKUBE_IP} -P 3306 -u root -proot123"
+                echo "   Test Spring Boot: curl -v http://${MINIKUBE_IP}:30080${CONTEXT_PATH}/actuator/health"
             """
         }
+
+
     }
 }
