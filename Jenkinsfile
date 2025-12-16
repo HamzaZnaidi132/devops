@@ -13,6 +13,7 @@ pipeline {
         MINIKUBE_IP = "192.168.49.2"
     }
 
+
     triggers {
         githubPush()
     }
@@ -594,5 +595,6 @@ spec:
             """
         }
     }
+
 
 }
