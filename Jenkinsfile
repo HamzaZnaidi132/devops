@@ -2,12 +2,12 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = "saiffrikhi/foyer_project"
+        IMAGE_NAME = "hamzaznaidi/foyer_project"
         IMAGE_TAG = "latest"
         K8S_NAMESPACE = "devops"
         CONTEXT_PATH = "/tp-foyer"
-        DOCKERHUB_CREDENTIALS = credentials('docker-hub')
-        SONAR_HOST_URL = "http://172.30.40.173:9000"
+        DOCKERHUB_CREDENTIALS = credentials('8248def7-9835-4807-8c09-ee56c34c0e21')
+        SONAR_HOST_URL = "http://172.16.4.169:9000"
         SONAR_PROJECT_KEY = "foyer-project"
         SONAR_TOKEN = credentials('sonar-token')
         MINIKUBE_IP = "192.168.49.2"
@@ -96,7 +96,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 echo "📦 Récupération du code depuis GitHub..."
-                git branch: 'main', url: 'https://github.com/saifeddinefrikhi-lab/FoyerProject.git'
+                git branch: 'main', url: 'https://github.com/HamzaZnaidi132/devops.git'
             }
         }
 
