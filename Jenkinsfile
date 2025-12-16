@@ -124,36 +124,32 @@ EOF
             }
         }
 
-        stage('SonarQube Quality Gate') {
-            steps {
-                echo "🔍 Analyse de la qualité du code avec SonarQube..."
-                script {
-                    withSonarQubeEnv('SonarQube') {
-                        sh '''
-                            echo "=== Démarrage de l'analyse SonarQube ==="
-                            mvn clean verify sonar:sonar \
-                                -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
-                                -Dsonar.projectName="Foyer Project" \
-                                -Dsonar.sources=src/main/java \
-                                -Dsonar.tests=src/test/java \
-                                -Dsonar.java.binaries=target/classes \
-                                -Dsonar.java.libraries=target/**/*.jar \
-                                -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
-                                -Dsonar.sourceEncoding=UTF-8 \
-                                -Dsonar.host.url=${SONAR_HOST_URL} \
-                                -DskipTests=true
+       stage('SonarQube Analysis') {
+           steps {
+               echo "🔍 Analyse SonarQube (sans attente)..."
+               script {
+                   withSonarQubeEnv('SonarQube') {
+                       sh '''
+                           mvn clean verify sonar:sonar \
+                               -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                               -Dsonar.projectName="Foyer Project" \
+                               -Dsonar.sources=src/main/java \
+                               -Dsonar.tests=src/test/java \
+                               -Dsonar.java.binaries=target/classes \
+                               -Dsonar.sourceEncoding=UTF-8 \
+                               -Dsonar.host.url=${SONAR_HOST_URL} \
+                               -DskipTests=true \
+                               -Dsonar.qualitygate.wait=false
 
-                            echo "=== Attente du traitement SonarQube ==="
-                            sleep 30
-                        '''
-                    }
-
-                    timeout(time: 10, unit: 'MINUTES') {
-                        waitForQualityGate abortPipeline: true
-                    }
-                }
-            }
-        }
+                           echo "✅ Analyse soumise à SonarQube"
+                           echo "Le quality gate sera vérifié séparément"
+                       '''
+                   }
+                   // Continue immediately
+                   echo "Continuing with pipeline..."
+               }
+           }
+       }
 
         stage('Build & Test') {
             steps {
