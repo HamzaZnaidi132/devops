@@ -127,7 +127,7 @@ pipeline {
             steps {
                 echo "🐳 Construction de l'image Docker..."
                 script {
-                    withCredentials([usernamePassword(credentialsId: 'docker-hub', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    withCredentials([usernamePassword(credentialsId: '8248def7-9835-4807-8c09-ee56c34c0e21', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                         sh """
                             # Switch to Minikube's Docker daemon
                             eval \$(minikube docker-env)
@@ -158,7 +158,7 @@ EOF
         stage('Push to DockerHub') {
             steps {
                 echo "🚀 Pushing image to DockerHub..."
-                withCredentials([usernamePassword(credentialsId: 'docker-hub', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                withCredentials([usernamePassword(credentialsId: '8248def7-9835-4807-8c09-ee56c34c0e21', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh """
                         echo "=== Login to DockerHub ==="
                         echo "\${DOCKER_PASS}" | docker login -u "\${DOCKER_USER}" --password-stdin
