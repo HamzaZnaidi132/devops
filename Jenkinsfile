@@ -18,7 +18,6 @@ pipeline {
     }
 
 
-
     stages {
         stage('Prepare Environment') {
             steps {
