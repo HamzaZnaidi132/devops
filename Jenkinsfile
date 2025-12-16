@@ -123,12 +123,23 @@ EOF
             }
         }
 
-       stage('Skip SonarQube (Temp)') {
-                   steps {
-                       echo "⚠️  SonarQube skipped for now - will fix separately"
-                       echo "You can check SonarQube manually at: ${SONAR_HOST_URL}"
-                   }
+       stage('SonarQube Quick Analysis') {
+           steps {
+               echo "🔍 Quick SonarQube Analysis..."
+               script {
+                   // Run SonarQube analysis WITHOUT waiting
+                   sh '''
+                       mvn clean compile sonar:sonar \
+                           -Dsonar.projectKey=foyer-project \
+                           -Dsonar.host.url=http://172.30.40.173:9000 \
+                           -Dsonar.login=${SONAR_TOKEN} \
+                           -Dsonar.qualitygate.wait=false \
+                           -DskipTests
+                       echo "✅ Analysis submitted to SonarQube"
+                   '''
                }
+           }
+       }
 
         stage('Build & Test') {
             steps {
