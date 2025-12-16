@@ -22,19 +22,72 @@ pipeline {
             steps {
                 script {
                     sh '''
-                        # Create namespace if it doesn't exist
-                        if ! kubectl get namespace ${K8S_NAMESPACE} &>/dev/null; then
-                            echo "Creating namespace ${K8S_NAMESPACE}..."
-                            kubectl create namespace ${K8S_NAMESPACE}
-                        else
-                            echo "Namespace ${K8S_NAMESPACE} already exists"
+                        # Check if namespace exists
+                        if kubectl get namespace ${K8S_NAMESPACE} &>/dev/null; then
+                            echo "Namespace ${K8S_NAMESPACE} exists. Performing complete cleanup..."
 
-                            # Clean up previous deployments
-                            kubectl delete deployment --all -n ${K8S_NAMESPACE} --wait=false || true
-                            kubectl delete service --all -n ${K8S_NAMESPACE} --wait=false || true
+                            # Delete everything in the namespace
+                            echo "=== Deleting all resources in namespace ==="
+                            kubectl delete all --all -n ${K8S_NAMESPACE} --wait=false || true
                             kubectl delete pvc --all -n ${K8S_NAMESPACE} --wait=false || true
+                            kubectl delete configmap --all -n ${K8S_NAMESPACE} --wait=false || true
+                            kubectl delete secret --all -n ${K8S_NAMESPACE} --wait=false || true
+                            kubectl delete ingress --all -n ${K8S_NAMESPACE} --wait=false || true
+                            kubectl delete networkpolicy --all -n ${K8S_NAMESPACE} --wait=false || true
+
+                            # Wait a bit for resources to be deleted
                             sleep 10
+
+                            # Delete PVs that might be associated with this namespace
+                            echo "=== Deleting PersistentVolumes ==="
+                            kubectl get pv -o jsonpath='{.items[*].metadata.name}' | while read pv; do
+                                kubectl delete pv "$pv" --wait=false || true
+                            done
+
+                            # Delete the namespace itself
+                            echo "=== Deleting namespace ${K8S_NAMESPACE} ==="
+                            kubectl delete namespace ${K8S_NAMESPACE} --wait=false
+
+                            # Wait for namespace to be deleted
+                            echo "Waiting for namespace deletion..."
+                            COUNTER=0
+                            while kubectl get namespace ${K8S_NAMESPACE} &>/dev/null && [ $COUNTER -lt 30 ]; do
+                                echo "⏱️  Waiting... ($((COUNTER*2))s)"
+                                sleep 2
+                                COUNTER=$((COUNTER + 1))
+                            done
+
+                            # Force delete if still stuck
+                            if kubectl get namespace ${K8S_NAMESPACE} &>/dev/null; then
+                                echo "Namespace stuck in Terminating. Forcing deletion..."
+                                kubectl get namespace ${K8S_NAMESPACE} -o json | jq '.spec.finalizers = []' | kubectl replace --raw "/api/v1/namespaces/${K8S_NAMESPACE}/finalize" -f - 2>/dev/null || true
+                                sleep 5
+                            fi
                         fi
+
+                        # Create fresh namespace
+                        echo "=== Creating namespace ${K8S_NAMESPACE} ==="
+                        kubectl create namespace ${K8S_NAMESPACE}
+
+                        # Verify namespace is active
+                        echo "Verifying namespace is active..."
+                        COUNTER=0
+                        while [ $COUNTER -lt 10 ]; do
+                            STATUS=$(kubectl get namespace ${K8S_NAMESPACE} -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+                            if [ "$STATUS" = "Active" ]; then
+                                echo "✅ Namespace ${K8S_NAMESPACE} is active"
+                                break
+                            fi
+                            echo "Waiting for namespace to be active... ($((COUNTER*2))s)"
+                            sleep 2
+                            COUNTER=$((COUNTER + 1))
+                        done
+
+                        # Set current context to the namespace
+                        echo "Setting current context to ${K8S_NAMESPACE}..."
+                        kubectl config set-context --current --namespace=${K8S_NAMESPACE}
+
+                        echo "✅ Environment preparation completed successfully!"
                     '''
                 }
             }
@@ -46,6 +99,7 @@ pipeline {
                 git branch: 'main', url: 'https://github.com/saifeddinefrikhi-lab/FoyerProject.git'
             }
         }
+
 
         stage('SonarQube Quality Gate') {
             steps {
