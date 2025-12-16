@@ -573,6 +573,7 @@ spec:
         }
 
         failure {
+
             echo "💥 Le pipeline a échoué"
             sh """
                 echo ""
@@ -595,6 +596,7 @@ spec:
             """
         }
     }
+
 
 
 }
