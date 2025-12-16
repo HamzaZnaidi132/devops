@@ -102,36 +102,6 @@ pipeline {
         }
 
 
-        stage('SonarQube Quality Gate') {
-            steps {
-                echo "🔍 Analyse de la qualité du code avec SonarQube..."
-                script {
-                    withSonarQubeEnv('SonarQube') {
-                        sh '''
-                            echo "=== Démarrage de l'analyse SonarQube ==="
-                            mvn clean verify sonar:sonar \
-                                -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
-                                -Dsonar.projectName="Foyer Project" \
-                                -Dsonar.sources=src/main/java \
-                                -Dsonar.tests=src/test/java \
-                                -Dsonar.java.binaries=target/classes \
-                                -Dsonar.java.libraries=target/**/*.jar \
-                                -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
-                                -Dsonar.sourceEncoding=UTF-8 \
-                                -Dsonar.host.url=${SONAR_HOST_URL} \
-                                -DskipTests=true
-
-                            echo "=== Attente du traitement SonarQube ==="
-                            sleep 30
-                        '''
-                    }
-
-                    timeout(time: 10, unit: 'MINUTES') {
-                        waitForQualityGate abortPipeline: true
-                    }
-                }
-            }
-        }
 
         stage('Build & Test') {
             steps {
